@@ -24,6 +24,14 @@ INTENT_MAP: dict[str, list[FindingSource]] = {
     "social": [FindingSource.SOCIAL_MEDIA, FindingSource.PEOPLE, FindingSource.WEBSITES],
     "conflict": [FindingSource.CONFLICT, FindingSource.SATELLITE, FindingSource.GEOLOCATION],
     "owner": [FindingSource.WEBSITES, FindingSource.CORPORATE, FindingSource.PEOPLE],
+    "linkedin": [FindingSource.SOCIAL_MEDIA, FindingSource.PEOPLE],
+    "github": [FindingSource.SOCIAL_MEDIA, FindingSource.PEOPLE, FindingSource.WEBSITES],
+    "twitter": [FindingSource.SOCIAL_MEDIA],
+    "instagram": [FindingSource.SOCIAL_MEDIA],
+    "substack": [FindingSource.SOCIAL_MEDIA, FindingSource.WEBSITES],
+    "tiktok": [FindingSource.SOCIAL_MEDIA],
+    "youtube": [FindingSource.SOCIAL_MEDIA],
+    "email": [FindingSource.PEOPLE],
 }
 
 # Fallback categories when no intent is matched

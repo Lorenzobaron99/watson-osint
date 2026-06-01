@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import urllib.parse
 
 from .base import OSINTTool
 from .registry import registry
@@ -64,6 +65,34 @@ class PeopleTool(OSINTTool):
                     username=uname,
                 )
             )
+
+        # Fallback: bare name lookup (e.g., "John Smith")
+        if not findings:
+            person_name = self._extract_person_name(query)
+            if person_name:
+                encoded = urllib.parse.quote(person_name)
+                findings.append(
+                    self._make_finding(
+                        title=f"👤 Person: {person_name}",
+                        description=(
+                            f"Searching for **{person_name}** across public records and platforms:\n"
+                            f"- [Google search](https://www.google.com/search?q=%22{encoded}%22)\n"
+                            f"- [LinkedIn](https://www.linkedin.com/search/results/people/?keywords={encoded})\n"
+                            f"- [OpenSanctions](https://opensanctions.org/search/?q={encoded})\n"
+                            f"- [Wikipedia](https://en.wikipedia.org/wiki/Special:Search?search={encoded})\n\n"
+                            f"To investigate further, try:\n"
+                            f"`watson investigate \"{person_name} email\"` for email breach check\n"
+                            f"`watson investigate \"{person_name} company\"` for corporate ties"
+                        ),
+                        evidence=[
+                            f"https://www.google.com/search?q=%22{encoded}%22",
+                            f"https://www.linkedin.com/search/results/people/?keywords={encoded}",
+                            f"https://opensanctions.org/search/?q={encoded}",
+                        ],
+                        confidence=0.5,
+                        person_name=person_name,
+                    )
+                )
 
         return findings
 
@@ -137,6 +166,27 @@ class PeopleTool(OSINTTool):
             usernames.append(match.group(1))
 
         return list(dict.fromkeys(usernames))
+
+    def _extract_person_name(self, text: str) -> str | None:
+        """Extract a person's name from query text. Handles bare names like 'John Smith'."""
+        import re
+
+        # Pattern: two capitalized words (e.g., "Lorenzo Baron", "John Smith")
+        # Match anywhere in the text
+        match = re.search(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\b", text)
+        if match:
+            return match.group(1)
+
+        # Also match "person named X" or "who is X"
+        for pattern in [
+            r"(?:person|individual|guy|man|woman)\s+(?:named|called|known as)\s+['\"]?([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})['\"]?",
+            r"who\s+is\s+['\"]?([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})['\"]?",
+        ]:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return match.group(1)
+
+        return None
 
 
 # Register
