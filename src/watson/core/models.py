@@ -58,9 +58,7 @@ class InvestigationRequest(BaseModel):
     """Top-level investigation request from user."""
 
     query: str
-    tools: list[FindingSource] = Field(
-        default_factory=lambda: list(FindingSource)
-    )
+    tools: list[FindingSource] | None = Field(default=None)
     max_findings_per_tool: int = 10
     cross_reference: bool = True
 

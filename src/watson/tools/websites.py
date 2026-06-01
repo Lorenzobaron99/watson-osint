@@ -19,7 +19,7 @@ class WebsitesTool(OSINTTool):
     name = "websites-domains"
     description = "WHOIS lookup, Wayback Machine history, SSL certificates (crt.sh), subdomain discovery"
     free_tier_available = True
-    rate_limit_rps = 1.0
+    rate_limit_rps = 3.0
 
     WAYBACK_CDX = "https://web.archive.org/cdx/search/cdx"
     CRTSH_API = "https://crt.sh/"
@@ -36,19 +36,19 @@ class WebsitesTool(OSINTTool):
         for domain in domains[:3]:  # Max 3 domains
             clean = extract_domain(domain)
 
-            # 1. Wayback Machine CDX (history snapshot count)
-            wayback = await self._check_wayback(client, clean)
-            if wayback:
+            # Run all three checks in parallel (with short timeouts for slow APIs)
+            wayback, crt, dns = await asyncio.gather(
+                self._check_wayback(client, clean),
+                self._check_crtsh(client, clean),
+                self._check_dns(client, clean),
+                return_exceptions=True,
+            )
+
+            if isinstance(wayback, Finding):
                 findings.append(wayback)
-
-            # 2. SSL certificate transparency (crt.sh)
-            crt = await self._check_crtsh(client, clean)
-            if crt:
+            if isinstance(crt, Finding):
                 findings.append(crt)
-
-            # 3. DNS records
-            dns = await self._check_dns(client, clean)
-            if dns:
+            if isinstance(dns, Finding):
                 findings.append(dns)
 
         return findings
@@ -129,18 +129,23 @@ class WebsitesTool(OSINTTool):
     async def _check_dns(self, client, domain: str) -> Finding | None:
         """Check DNS records via Google DNS-over-HTTPS."""
         try:
-            records_found = []
-            for rtype in ["A", "AAAA", "MX", "NS", "TXT"]:
+            async def _query(rt: str) -> str | None:
                 try:
                     data = await client.get_json(
-                        self.DNS_OVER_HTTPS, params={"name": domain, "type": rtype}
+                        self.DNS_OVER_HTTPS, params={"name": domain, "type": rt}
                     )
                     answers = data.get("Answer", [])
                     if answers:
                         values = [a["data"] for a in answers[:3]]
-                        records_found.append(f"{rtype}: {', '.join(values)}")
+                        return f"{rt}: {', '.join(values)}"
                 except Exception:
                     pass
+                return None
+
+            results = await asyncio.gather(
+                *[_query(rt) for rt in ["A", "AAAA", "MX", "NS", "TXT"]]
+            )
+            records_found = [r for r in results if r]
 
             if records_found:
                 return self._make_finding(

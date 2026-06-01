@@ -47,8 +47,8 @@ class BaseHTTPClient:
     def __init__(
         self,
         rate_limit: float = 1.0,
-        max_retries: int = 3,
-        timeout: float = 30.0,
+        max_retries: int = 1,
+        timeout: float = 8.0,
     ):
         self.rate_limiter = RateLimiter(rate_limit)
         self.max_retries = max_retries
@@ -101,13 +101,9 @@ class BaseHTTPClient:
             self._client = None
 
 
-# Shared client instance
-_shared_client: Optional[BaseHTTPClient] = None
-
-
 def get_client(rate_limit: float = 1.0) -> BaseHTTPClient:
-    """Get or create the shared HTTP client."""
-    global _shared_client
-    if _shared_client is None:
-        _shared_client = BaseHTTPClient(rate_limit=rate_limit)
-    return _shared_client
+    """Create a new HTTP client with the given rate limit.
+
+    Each tool gets its own client to avoid rate-limit contention across parallel tools.
+    """
+    return BaseHTTPClient(rate_limit=rate_limit)

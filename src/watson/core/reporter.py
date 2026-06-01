@@ -70,7 +70,7 @@ class Reporter:
                         words_a = set(fa.title.lower().split())
                         words_b = set(fb.title.lower().split())
                         overlap = words_a & words_b
-                        meaningful = {w for w in overlap if len(w) > 3}
+                        meaningful = {w for w in overlap if len(w) > 4}
 
                         if len(meaningful) >= 2:
                             refs.append(

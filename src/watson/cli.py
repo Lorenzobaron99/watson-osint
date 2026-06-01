@@ -55,14 +55,14 @@ async def _run_investigation(query: str, tools: list[str] | None, output: str | 
         transient=True,
     ) as progress:
         task = progress.add_task(
-            f"[bold amber]Investigating: {query[:80]}...", total=None
+            f"[bold gold1]Investigating: {query[:80]}...", total=None
         )
         report = await engine.investigate(query, tools=tools)
         progress.remove_task(task)
 
     # Render report
     console.print()
-    console.rule("[bold amber]🔍 WATSON INVESTIGATION REPORT")
+    console.rule("[bold gold1]🔍 WATSON INVESTIGATION REPORT")
     console.print()
 
     # Summary panel
@@ -74,7 +74,7 @@ async def _run_investigation(query: str, tools: list[str] | None, output: str | 
             sev_parts.append(f"{icon} {count} {sev}")
         stats += " | " + " ".join(sev_parts)
 
-    console.print(Panel(stats, title="Summary", border_style="amber"))
+    console.print(Panel(stats, title="Summary", border_style="gold1"))
 
     # Findings by severity
     if report.findings:
@@ -167,7 +167,7 @@ def investigate(query: str, tools: tuple[str, ...], output: str | None):
 def tools():
     """List all available OSINT tools."""
     console.print()
-    console.rule("[bold amber]🛠 AVAILABLE OSINT TOOLS")
+    console.rule("[bold gold1]🛠 AVAILABLE OSINT TOOLS")
     console.print()
 
     table = Table(box=box.SIMPLE)
@@ -211,7 +211,7 @@ def tool_info(tool_name: str):
         f"Free tier: {'✅ Yes' if tool.free_tier_available else '🔑 Requires API key'}\n"
         f"Rate limit: {tool.rate_limit_rps} req/s",
         title="Tool Info",
-        border_style="amber",
+        border_style="gold1",
     ))
 
 

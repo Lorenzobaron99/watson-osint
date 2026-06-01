@@ -17,7 +17,7 @@ class CorporateTool(OSINTTool):
     name = "corporate-finance"
     description = "Company registry lookup (OpenCorporates), sanctions check (OpenSanctions), SEC EDGAR"
     free_tier_available = True
-    rate_limit_rps = 0.5
+    rate_limit_rps = 2.0
 
     OPENCORPORATES_API = "https://api.opencorporates.com/v0.4/companies/search"
     OPENSANCTIONS_API = "https://api.opensanctions.org/search/default"

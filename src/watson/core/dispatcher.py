@@ -61,7 +61,11 @@ class Dispatcher:
         self, request: InvestigationRequest
     ) -> list[InvestigationTask]:
         """Decompose the investigation request into individual tool tasks."""
-        categories = request.tools or self._detect_intent(request.query)
+        # Use explicit tools if provided, otherwise auto-detect from query
+        if request.tools is not None:
+            categories = request.tools
+        else:
+            categories = self._detect_intent(request.query)
         tasks: list[InvestigationTask] = []
 
         for i, cat in enumerate(categories):
@@ -85,6 +89,7 @@ class Dispatcher:
     async def _run_tool(
         self,
         task: InvestigationTask,
+        timeout: float = 25.0,
     ) -> list[Finding]:
         """Run a single tool investigation with concurrency control."""
         tool = registry.get(task.tool_category.value) or next(
@@ -95,10 +100,23 @@ class Dispatcher:
 
         async with self._semaphore:
             try:
-                findings = await tool.investigate(task.query, task.context)
+                findings = await asyncio.wait_for(
+                    tool.investigate(task.query, task.context),
+                    timeout=timeout,
+                )
                 return findings
+            except asyncio.TimeoutError:
+                return [
+                    Finding(
+                        id=f"timeout-{task.tool_category.value}",
+                        source=task.tool_category,
+                        tool=tool.name if tool else "unknown",
+                        title=f"Timeout in {task.tool_category.value} tool",
+                        description=f"Investigation timed out after {timeout}s",
+                        confidence=0.0,
+                    )
+                ]
             except Exception as e:
-                # Return an error finding instead of crashing
                 return [
                     Finding(
                         id=f"error-{task.tool_category.value}",
