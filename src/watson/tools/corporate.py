@@ -33,6 +33,26 @@ class CorporateTool(OSINTTool):
             if person:
                 findings.extend(await self._check_sanctions(person))
                 return findings
+
+            # Fallback: extract any capitalized name for sanctions/company check
+            entity = self._extract_entity(query)
+            if entity:
+                findings.extend(await self._check_sanctions(entity))
+                findings.append(self._make_finding(
+                    title=f"🔍 Entity search: {entity}",
+                    description=(
+                        f"Searching corporate records and sanctions for **{entity}**:\n"
+                        f"- [OpenCorporates](https://opencorporates.com/companies?q={urllib.parse.quote(entity)})\n"
+                        f"- [OpenSanctions](https://opensanctions.org/search/?q={urllib.parse.quote(entity)})\n"
+                        f"- [Google](https://www.google.com/search?q={urllib.parse.quote(entity)}+company+sanctions)"
+                    ),
+                    evidence=[
+                        f"https://opencorporates.com/companies?q={urllib.parse.quote(entity)}",
+                        f"https://opensanctions.org/search/?q={urllib.parse.quote(entity)}",
+                    ],
+                    confidence=0.5,
+                ))
+                return findings
             return findings
 
         client = get_client(rate_limit=self.rate_limit_rps)
@@ -176,6 +196,28 @@ class CorporateTool(OSINTTool):
             match = re.search(pattern, text, re.IGNORECASE)
             if match:
                 return match.group(1).strip()
+
+        return None
+
+    def _extract_entity(self, text: str) -> str | None:
+        """Extract any capitalized entity name (person or company) from unstructured text."""
+        import re
+
+        # Strip common investigative keywords
+        stripped = re.sub(
+            r'\b(?:company|companies|sanctions?|corporate|investigate|research|look\s+up|check|search|find)\b',
+            '', text, flags=re.IGNORECASE
+        )
+
+        # Strip quotes
+        stripped = re.sub(r'["\']', '', stripped)
+
+        # Find capitalized name sequences (2-3 words)
+        match = re.search(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\b', stripped)
+        if match:
+            name = match.group(1).strip()
+            if len(name) > 3:
+                return name
 
         return None
 

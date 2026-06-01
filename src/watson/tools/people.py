@@ -172,8 +172,17 @@ class PeopleTool(OSINTTool):
         import re
 
         # Pattern: two capitalized words (e.g., "Lorenzo Baron", "John Smith")
-        # Match anywhere in the text
-        match = re.search(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\b", text)
+        # Match anywhere in the text, handling quoted nicknames
+        match = re.search(
+            r"\b([A-Z][a-z]+(?:\s+(?:\"[A-Z][a-z]+\"\s+)?[A-Z][a-z]+){1,3})\b",
+            text
+        )
+        if match:
+            return match.group(1)
+
+        # Fallback: strip quotes and try again
+        clean = re.sub(r'["\']', '', text)
+        match = re.search(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\b", clean)
         if match:
             return match.group(1)
 
