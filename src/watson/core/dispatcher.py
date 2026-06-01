@@ -32,6 +32,8 @@ INTENT_MAP: dict[str, list[FindingSource]] = {
     "tiktok": [FindingSource.SOCIAL_MEDIA],
     "youtube": [FindingSource.SOCIAL_MEDIA],
     "email": [FindingSource.PEOPLE],
+    "captcha": [FindingSource.IMAGE_VIDEO],
+    "solve": [FindingSource.IMAGE_VIDEO],
 }
 
 # Fallback categories when no intent is matched

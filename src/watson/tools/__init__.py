@@ -15,6 +15,7 @@ from . import websites
 from . import corporate
 from . import conflict
 from . import scraper
+from . import captcha
 
 __all__ = [
     "satellite",
@@ -26,4 +27,5 @@ __all__ = [
     "corporate",
     "conflict",
     "scraper",
+    "captcha",
 ]

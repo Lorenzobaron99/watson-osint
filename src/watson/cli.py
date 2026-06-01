@@ -215,6 +215,42 @@ def tool_info(tool_name: str):
     ))
 
 
+@main.command()
+@click.argument("image_path")
+@click.option("--api-base", help="API base URL (default: DeepSeek)")
+@click.option("--api-key", help="API key (default: $OPENAI_API_KEY)")
+@click.option("--model", default="deepseek-v4-pro", help="Vision model to use")
+def captcha(image_path: str, api_base: str | None, api_key: str | None, model: str):
+    """Solve a CAPTCHA image using vision AI.
+
+    \b
+    Examples:
+      watson captcha ~/Desktop/captcha.png
+      watson captcha captcha.jpg --model gpt-4o --api-key sk-...
+    """
+    from .tools.captcha import CaptchaSolver
+
+    solver = CaptchaSolver(
+        api_base=api_base,
+        api_key=api_key,
+        model=model,
+    )
+
+    with console.status("[bold gold1]Solving CAPTCHA..."):
+        result = solver.solve(image_path)
+
+    if result["success"]:
+        console.print()
+        console.print(Panel(
+            f"[bold green]Answer: {result['answer']}[/bold green]\n"
+            f"Type: {result.get('captcha_type', 'unknown')}",
+            title="✅ CAPTCHA Solved",
+            border_style="green",
+        ))
+    else:
+        console.print(f"\n[red]❌ Failed: {result.get('error', 'Unknown error')}[/red]")
+
+
 def cli():
     """Entry point for console_scripts."""
     main()
