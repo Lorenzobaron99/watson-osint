@@ -14,6 +14,7 @@ from . import people
 from . import websites
 from . import corporate
 from . import conflict
+from . import scraper
 
 __all__ = [
     "satellite",
@@ -24,4 +25,5 @@ __all__ = [
     "websites",
     "corporate",
     "conflict",
+    "scraper",
 ]

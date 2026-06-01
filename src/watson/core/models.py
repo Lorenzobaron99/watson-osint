@@ -49,6 +49,7 @@ class InvestigationTask(BaseModel):
 
     id: str
     tool_category: FindingSource
+    tool_name: str = ""
     query: str
     context: str = ""
     priority: int = 1

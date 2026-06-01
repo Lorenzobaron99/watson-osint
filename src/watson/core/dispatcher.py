@@ -84,8 +84,9 @@ class Dispatcher:
             for tool in tools:
                 tasks.append(
                     InvestigationTask(
-                        id=f"{cat.value}-{i}",
+                        id=f"{cat.value}-{tool.name}",
                         tool_category=cat,
+                        tool_name=tool.name,
                         query=request.query,
                         context=request.query,
                         priority=1,
@@ -100,9 +101,10 @@ class Dispatcher:
         timeout: float = 25.0,
     ) -> list[Finding]:
         """Run a single tool investigation with concurrency control."""
-        tool = registry.get(task.tool_category.value) or next(
-            iter(registry.get_for_category(task.tool_category)), None
-        )
+        # Use explicit tool name if provided, otherwise fall back to first in category
+        tool = registry.get(task.tool_name) if task.tool_name else None
+        if tool is None:
+            tool = next(iter(registry.get_for_category(task.tool_category)), None)
         if tool is None:
             return []
 
