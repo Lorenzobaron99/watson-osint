@@ -27,6 +27,13 @@ cases/
 # Hermes
 .hermes/
 
-# Old Watson code (kept for reference)
-src/
+# Deprecated legacy code
+web/app.py
+web/templates/
+web/static/
+web/exports/
 web/__pycache__/
+web/__init__.py
+
+# Reference (old Watson engine code — Bellingcat registry, tools)
+src/

@@ -156,4 +156,4 @@ MCP_PORT=8001
 
 ## License
 
-MIT
+GNU Affero General Public License v3.0 — if you run Watson as a network service, you must release your modifications.
