@@ -1,16 +1,32 @@
+# Python
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
 *.egg-info/
 dist/
 build/
 .venv/
 venv/
+
+# Environment
 .env
+*.env
+
+# Watson runtime
+watson-cases/
+~/.watson/
+cases/
+*.jsonl
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
 .DS_Store
-*.egg
-.coverage
-htmlcov/
-.pytest_cache/
-.ruff_cache/
+
+# Hermes
+.hermes/
+
+# Old Watson code (kept for reference)
+src/
+web/__pycache__/

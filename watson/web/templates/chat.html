@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Watson OSINT</title>
+    <style>
+        :root {
+            --watson-amber: #e67e00;
+            --watson-dark: #1a1a2e;
+            --watson-darker: #0f0f1a;
+            --watson-card: #1e1e36;
+            --watson-text: #e0e0e0;
+            --watson-muted: #8888aa;
+            --watson-green: #00c853;
+            --watson-red: #ff5252;
+            --watson-yellow: #ffd740;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', monospace;
+            background: var(--watson-darker);
+            color: var(--watson-text);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        header {
+            background: var(--watson-dark);
+            border-bottom: 1px solid var(--watson-amber);
+            padding: 16px 24px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        header .logo {
+            font-size: 20px;
+            font-weight: bold;
+            color: var(--watson-amber);
+        }
+        header .tagline {
+            font-size: 12px;
+            color: var(--watson-muted);
+        }
+        #chat {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+        .message {
+            max-width: 85%;
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        .message.user {
+            align-self: flex-end;
+            background: var(--watson-amber);
+            color: var(--watson-darker);
+        }
+        .message.watson {
+            align-self: flex-start;
+            background: var(--watson-card);
+            border: 1px solid #333;
+        }
+        .message.watson h2 { color: var(--watson-amber); margin-bottom: 8px; font-size: 16px; }
+        .message.watson h3 { color: var(--watson-amber); margin: 12px 0 4px; font-size: 14px; }
+        .message.watson strong { color: var(--watson-yellow); }
+        .message.watson code {
+            background: #2a2a44;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 13px;
+        }
+        .message.watson pre {
+            background: #2a2a44;
+            padding: 12px;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin: 8px 0;
+        }
+        .finding-card {
+            background: #252540;
+            border-left: 3px solid var(--watson-amber);
+            padding: 8px 12px;
+            margin: 8px 0;
+            border-radius: 0 6px 6px 0;
+        }
+        .confidence-high { border-left-color: var(--watson-green); }
+        .confidence-med { border-left-color: var(--watson-yellow); }
+        .confidence-low { border-left-color: var(--watson-red); }
+        .typing-indicator {
+            color: var(--watson-muted);
+            font-style: italic;
+            padding: 12px 16px;
+        }
+        #input-area {
+            background: var(--watson-dark);
+            border-top: 1px solid #333;
+            padding: 16px 24px;
+            display: flex;
+            gap: 12px;
+        }
+        #query {
+            flex: 1;
+            background: var(--watson-darker);
+            border: 1px solid #444;
+            color: var(--watson-text);
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        #query:focus { border-color: var(--watson-amber); }
+        #send {
+            background: var(--watson-amber);
+            color: var(--watson-darker);
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-weight: bold;
+            font-size: 14px;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        #send:hover { opacity: 0.9; }
+        #send:disabled { opacity: 0.5; cursor: not-allowed; }
+        .status-bar {
+            background: var(--watson-dark);
+            padding: 8px 24px;
+            font-size: 11px;
+            color: var(--watson-muted);
+            display: flex;
+            justify-content: space-between;
+            border-top: 1px solid #222;
+        }
+        .status-bar .stat { display: flex; gap: 16px; }
+        .badge {
+            background: var(--watson-card);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+        }
+        .badge.free { color: var(--watson-green); }
+        @media (max-width: 600px) {
+            .message { max-width: 95%; }
+            #input-area { padding: 12px; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <span class="logo">🕵️ WATSON</span>
+        <span class="tagline">OSINT Investigation Engine</span>
+    </header>
+
+    <div id="chat">
+        <div class="message watson">
+            <h2>🔍 Watson OSINT</h2>
+            <p>I'm an investigation engine, not a chatbot. I run multi-angle parallel investigations across OSINT sources, cross-reference findings, and build a persistent knowledge graph.</p>
+            <p style="margin-top:8px;"><strong>Try:</strong> investigate a person, company, domain, email, or topic.</p>
+            <p style="margin-top:4px;color:var(--watson-muted);font-size:12px;">Type /help for examples.</p>
+        </div>
+    </div>
+
+    <div id="input-area">
+        <input type="text" id="query" placeholder="Investigate... (e.g., shadowy-company.com)" autofocus>
+        <button id="send" onclick="sendMessage()">▶</button>
+    </div>
+
+    <div class="status-bar">
+        <span>Watson v0.1.0</span>
+        <div class="stat">
+            <span id="agent-status" class="badge free">agent: --</span>
+            <span id="graph-status" class="badge">graph: --</span>
+        </div>
+    </div>
+
+    <script>
+        const chat = document.getElementById('chat');
+        const queryInput = document.getElementById('query');
+        const sendBtn = document.getElementById('send');
+
+        queryInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') sendMessage();
+        });
+
+        async function checkHealth() {
+            try {
+                const resp = await fetch('/health');
+                const data = await resp.json();
+                document.getElementById('agent-status').textContent = `agent: ${data.agent}`;
+                document.getElementById('graph-status').textContent = `graph: ${data.graph.entity_count || 0} entities`;
+            } catch(e) {
+                document.getElementById('agent-status').textContent = 'agent: offline';
+            }
+        }
+
+        async function sendMessage() {
+            const query = queryInput.value.trim();
+            if (!query) return;
+            if (sendBtn.disabled) return;
+
+            // Check for /help
+            if (query === '/help') {
+                showHelp();
+                queryInput.value = '';
+                return;
+            }
+
+            // Add user message
+            addMessage('user', query);
+            queryInput.value = '';
+            sendBtn.disabled = true;
+
+            // Add typing indicator
+            const typing = addTypingIndicator();
+
+            try {
+                const resp = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: query })
+                });
+                const data = await resp.json();
+
+                // Remove typing indicator
+                typing.remove();
+
+                // Add Watson response
+                if (data.response) {
+                    addMessage('watson', data.response);
+                }
+
+                // If markdown provided, add "show full briefing" button
+                if (data.markdown) {
+                    const briefingDiv = document.createElement('div');
+                    briefingDiv.className = 'message watson';
+                    briefingDiv.innerHTML = `<p><a href="#" onclick="showBriefing('${data.case_id}')" style="color:var(--watson-amber);">📄 View full investigation briefing →</a></p>`;
+                    chat.appendChild(briefingDiv);
+
+                    // Store briefing for later
+                    window._briefings = window._briefings || {};
+                    window._briefings[data.case_id] = data.markdown;
+                }
+
+            } catch(e) {
+                typing.remove();
+                addMessage('watson', '❌ Investigation failed. Is the agent engine running?');
+            }
+
+            sendBtn.disabled = false;
+            chat.scrollTop = chat.scrollHeight;
+            checkHealth();
+        }
+
+        function addMessage(type, text) {
+            const div = document.createElement('div');
+            div.className = `message ${type}`;
+            // Convert markdown-ish to HTML
+            text = text
+                .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+                .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+                .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+                .replace(/`([^`]+)`/g, '<code>$1</code>')
+                .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" style="color:var(--watson-amber);">$1</a>')
+                .replace(/\n\n/g, '</p><p>')
+                .replace(/\n/g, '<br>');
+            div.innerHTML = '<p>' + text + '</p>';
+            chat.appendChild(div);
+            chat.scrollTop = chat.scrollHeight;
+        }
+
+        function addTypingIndicator() {
+            const div = document.createElement('div');
+            div.className = 'typing-indicator';
+            div.id = 'typing';
+            div.textContent = '🔍 Investigating...';
+            chat.appendChild(div);
+            chat.scrollTop = chat.scrollHeight;
+            return div;
+        }
+
+        function showBriefing(caseId) {
+            const briefing = window._briefings?.[caseId];
+            if (!briefing) return;
+            addMessage('watson', briefing);
+            chat.scrollTop = chat.scrollHeight;
+        }
+
+        function showHelp() {
+            const helpText = `## 📖 Watson Commands
+
+**Investigation targets:**
+- Person: "investigate John Doe"
+- Domain: "investigate shady-site.com"  
+- Company: "investigate Acme Corp"
+- Email: "investigate user@domain.com"
+- Topic: "investigate Colombian far-right politics"
+
+**Shortcuts:**
+- Just type your target — Watson auto-detects the type
+- /help — this message
+
+**What happens:**
+1. Watson classifies the target
+2. Dispatches 4-6 investigation angles in parallel
+3. Cross-references findings
+4. Generates a structured briefing
+5. Indexes entities in the knowledge graph
+6. Future investigations auto-surface connections`;
+            addMessage('watson', helpText);
+        }
+
+        // Health check on load
+        checkHealth();
+        setInterval(checkHealth, 30000);
+    </script>
+</body>
+</html>

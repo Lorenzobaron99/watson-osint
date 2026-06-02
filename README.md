@@ -1,209 +1,150 @@
-# 🔍 Watson — OSINT Research Agent
+# 🕵️ Watson — OSINT Investigation Engine
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+**Bellingcat-inspired. Graph-native. Agent-agnostic.**
 
-**Deploy the Bellingcat investigation toolkit. Investigate anything, everywhere, in parallel.**
+Watson is not a chatbot. It's an investigation engine that runs multi-angle parallel OSINT investigations, cross-references findings, and builds a persistent knowledge graph that grows smarter with every case.
 
-Watson is an open-source OSINT research agent that decomposes investigation queries, dispatches them across 8+ tool categories simultaneously, cross-references findings, and produces structured reports — all from the command line.
+[Read the full architecture →](WATSON_ARCHITECTURE.md)
 
-```bash
-$ watson investigate "who owns shady-domain.com and what else do they control?"
+## Why Watson
 
-🔍 WATSON INVESTIGATION REPORT
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+General agents answer your question and forget it. Watson investigates, correlates, and remembers.
 
-📚 Wayback Machine: shady-domain.com
-  First archived: Mar 15, 2022. Latest snapshot: May 28, 2026.
+| | ChatGPT / Claude | Watson |
+|---|---|---|
+| State | Stateless | Persistent graph |
+| Memory | None across sessions | Every case feeds the graph |
+| Cross-case | Impossible | Case #47 surfaces Case #12 |
+| Community | N/A | MCP server for collective intel |
+| Sources | Sometimes | Every finding has source + confidence |
 
-🔒 SSL certs: 17 subdomains found for shady-domain.com
-  Discovered via certificate transparency logs.
-
-🏢 Company records: 3 matches
-  - ACME Holdings Ltd (UK, #12345678)
-  - ACME Services Inc (US, #87654321)
-
-🚨 Sanctions check: 1 match for 'ACME Holdings'
-  - ACME Holdings Ltd [Company] (Russia)
-
-🔗 Link: shady-domain.com ↔ ACME Holdings Ltd
-  Findings from websites and corporate share common elements: acme, holdings
-```
-
-## Why Watson?
-
-Most OSINT tools do one thing. Watson does everything — at once.
-
-- **Parallel dispatch**: All 8 tool categories run concurrently, not sequentially
-- **Bellingcat toolkit**: Satellite imagery, geolocation, reverse image search, domain history, corporate records, sanctions, social media — every tool in the investigative arsenal
-- **Zero configuration**: `pip install` → `watson investigate` — that's it. All tools use free/public APIs
-- **Cross-referencing**: Watson doesn't just collect data — it finds connections between findings from different sources
-- **Plugin architecture**: Adding a new tool is one Python class. Community contributions welcome
-- **Structured output**: Markdown reports, JSON export, confidence scores, evidence links
+**The moat is the graph.** Every investigation writes entities and relationships to a persistent knowledge graph. Future investigations auto-surface connections from past cases. No general agent has this.
 
 ## Quick Start
 
 ```bash
-pip install watson-osint
-watson investigate "your investigation query here"
+# Clone
+git clone https://github.com/YOUR_USERNAME/watson-osint.git
+cd watson-osint
+
+# Install
+pip install -r requirements.txt
+
+# Choose your agent engine:
+#   Option A: Hermes (recommended — full toolset)
+#     Install Hermes Agent: https://hermes-agent.nousresearch.com
+#     Run: hermes api-server --port 8778
+#
+#   Option B: Direct LLM (quick start — API key only)
+#     export WATSON_AGENT=direct
+#     export DEEPSEEK_API_KEY=your_key
+
+# Start Watson
+python -m watson.cli
+# or for web interface:
+uvicorn watson.web.app:app --port 8000
 ```
-
-### Examples
-
-```bash
-# Investigate a suspicious domain
-watson investigate "who owns paypa1-secure-login.com?"
-
-# Research a company and its owners
-watson investigate "acme corporation directors and subsidiaries"
-
-# Find a person across social media
-watson investigate "@john_doe social media presence"
-
-# Geolocate from coordinates
-watson investigate "48.8566, 2.3522" --tools satellite geolocation
-
-# Check an email for breaches
-watson investigate "user@example.com" --tools people
-
-# Monitor a conflict zone
-watson investigate "recent incidents in khartoum"
-
-# Save report to JSON
-watson investigate "company name ltd" -o report.json
-```
-
-## Tool Categories
-
-| Category | Capabilities | APIs Used |
-|---|---|---|
-| 🛰 **Satellite/Maps** | Satellite imagery, terrain, coordinate lookup | OpenStreetMap Nominatim, Google Earth |
-| 📍 **Geolocation** | Reverse geocoding, POI search, address verification | Nominatim, Overpass API |
-| 🖼 **Image/Video** | Reverse image search, verification | Google Lens, Yandex, TinEye |
-| 👤 **Social Media** | Cross-platform profile discovery (14+ platforms) | Direct HTTP checks |
-| 🔍 **People** | Email breach check, disposable detection, username enumeration | Have I Been Pwned, MailCheck.ai |
-| 🌐 **Websites/Domains** | WHOIS, Wayback history, SSL certs, DNS records | Internet Archive CDX, crt.sh, Google DNS |
-| 🏢 **Corporate/Finance** | Company records, sanctions, SEC filings | OpenCorporates, OpenSanctions, SEC EDGAR |
-| ⚔️ **Conflict** | Live conflict maps, incident data, resource aggregation | LiveUAMap, ACLED, NASA FIRMS |
-
-**All tools work with free/public APIs.** No API keys required.
 
 ## Architecture
 
 ```
-User Query
-    │
-    ▼
+investigate "shadowy-company.com"
+        │
+        ▼
 ┌──────────────────────────────┐
-│       Intent Detection       │  ← Maps query to tool categories
-└──────────────────────────────┘
-    │
-    ▼
+│ Phase 1: Semantic Analysis    │  Watson classifies target type,
+│   Target: domain              │  identifies investigation angles,
+│   Angles: WHOIS, DNS, SSL,    │  checks knowledge graph for
+│   Corporate, Historical, News │  prior findings
+└──────────┬───────────────────┘
+           ▼
 ┌──────────────────────────────┐
-│    Parallel Dispatcher       │  ← Runs all relevant tools concurrently
-│  ┌─────┐ ┌─────┐ ┌─────┐   │
-│  │🌐   │ │👤   │ │🏢   │   │
-│  │Web  │ │Peop │ │Corp │···│
-│  └─────┘ └─────┘ └─────┘   │
-└──────────────────────────────┘
-    │
-    ▼
+│ Phase 2: Parallel Dispatch    │  4-6 angles run simultaneously
+│   → crt.sh → 14 subdomains   │  via configured agent adapter
+│   → OpenCorporates → LLC     │  (Hermes, OpenClaw, Direct)
+│   → Wayback → 2018 owner     │
+│   → News → 3 articles        │
+└──────────┬───────────────────┘
+           ▼
 ┌──────────────────────────────┐
-│     Findings Collection      │  ← Gathers results from all tools
-└──────────────────────────────┘
-    │
-    ▼
+│ Phase 3: Cross-Reference      │  Finds connections between
+│   "John Doe" in 2 sources     │  sources. Links to prior
+│   Sanctions link confirmed    │  cases in the knowledge graph
+└──────────┬───────────────────┘
+           ▼
 ┌──────────────────────────────┐
-│     Cross-Referencing        │  ← Finds connections between sources
-└──────────────────────────────┘
-    │
-    ▼
-┌──────────────────────────────┐
-│       Report Generation      │  ← Structured markdown/JSON output
+│ Output: Structured Briefing   │  Case saved as CASE-XXXX.md
+│   + Knowledge Graph update    │  Free tier: published to MCP
+│   + Follow-up questions       │  Premium: private
 └──────────────────────────────┘
 ```
 
-## CLI Commands
+## Agent Agnostic
+
+Watson works with any agent engine:
+
+| Adapter | Setup | Toolset |
+|---|---|---|
+| **Hermes** | Local install | Web search, browser, vision, terminal, MCP |
+| **Direct LLM** | API key only | Web search (LLM-powered), basic reasoning |
+| **OpenClaw** | Coming soon | Full toolset |
+| **OpenHuman** | Coming soon | Full toolset |
+
+Set via `WATSON_AGENT` env var or choose during CLI onboarding.
+
+## Tiers
+
+| | Free | Journalist ($50/mo) | Team ($200/mo) |
+|---|---|---|---|
+| Cases | Public | Private | Private |
+| MCP publishing | ✅ | ❌ | ❌ |
+| File upload | ❌ | ✅ | ✅ |
+| Seats | 1 | 1 | 5 |
+| API access | ❌ | ❌ | ✅ |
+
+## MCP Server
+
+The community knowledge graph is exposed via Model Context Protocol:
 
 ```bash
-# Main investigation command
-watson investigate QUERY [--tools TOOL...] [--output FILE.json]
-
-# List all available tools
-watson tools
-
-# Get detailed info about a specific tool
-watson tool-info websites-domains
-
-# Version
-watson --version
+# Start MCP server
+uvicorn watson.mcp_server:mcp --port 8001
 ```
 
-## Installing for Development
+**Available tools:**
+- `watson_search` — search entities, cases, relations
+- `watson_traverse` — explore connections from an entity
+- `watson_case` — retrieve a published case
+- `watson_stats` — graph statistics
+- `watson_context` — check prior findings before investigating
 
-```bash
-git clone https://github.com/Lorenzobaron99/watson-osint.git
-cd watson-osint
-pip install -e ".[dev]"
+## Project Structure
 
-# Run tests
-pytest
-
-# Lint
-ruff check src/
 ```
-
-## Adding a New Tool
-
-Watson is built for community contributions. Adding a new investigation tool takes 3 steps:
-
-1. **Create the tool class** — inherit from `OSINTTool`:
-
-```python
-# src/watson/tools/my_tool.py
-from .base import OSINTTool
-from .registry import registry
-from ..core.models import Finding, FindingSource
-
-class MyTool(OSINTTool):
-    category = FindingSource.WEBSITES  # or add a new category
-    name = "my-new-tool"
-    description = "What my tool investigates"
-
-    async def investigate(self, query: str, context: str = "") -> list[Finding]:
-        # Your investigation logic here
-        return [
-            self._make_finding(
-                title="Finding title",
-                description="What was found",
-                evidence=["https://source.url"],
-                confidence=0.85,
-            )
-        ]
-
-# Register
-my_tool = MyTool()
-registry.register(my_tool)
+watson-osint/
+├── watson/
+│   ├── agents/          # Pluggable agent adapters
+│   │   ├── base.py      # Abstract interface
+│   │   ├── hermes.py    # Hermes adapter
+│   │   └── direct.py    # Direct LLM adapter
+│   ├── engine.py        # Investigation engine
+│   ├── graph.py         # Knowledge graph
+│   ├── mcp_server.py    # Community MCP endpoint
+│   ├── cli.py           # Branded CLI
+│   └── web/             # FastAPI shell + chat UI
+│       ├── app.py
+│       └── templates/
+├── requirements.txt
+└── LICENSE
 ```
-
-2. **Register it** — add `from . import my_tool` to `src/watson/tools/__init__.py`
-
-3. **Submit a PR!** See [CONTRIBUTING.md](docs/contributing.md)
 
 ## Roadmap
 
-- [ ] WHOIS integration (python-whois for parsed output)
-- [ ] Full EXIF extraction for uploaded images
-- [ ] LLM-powered finding synthesis and narrative generation
-- [ ] Web UI dashboard for visual investigation
-- [ ] API server mode for integration with other tools
-- [ ] More tool categories: flight tracking, maritime, cryptocurrency, dark web
-- [ ] Community tool marketplace
+1. **Open-source foundation** (now) — self-hosted, public cases, community MCP
+2. **Journalist SaaS** — hosted, private cases, file upload
+3. **API tier** — usage-based for compliance platforms
+4. **Enterprise on-prem** — government, SSO, SLA
 
 ## License
 
-MIT © Lorenzo Baron
-
----
-
-*"How often have I said to you that when you have eliminated the impossible, whatever remains, however improbable, must be the truth?" — Sherlock Holmes*
+MIT
