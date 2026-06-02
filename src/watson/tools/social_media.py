@@ -141,6 +141,17 @@ class SocialMediaTool(OSINTTool):
             if match:
                 usernames.append(match.group(1))
 
+        # Fallback: treat any single CamelCase word as a potential username
+        if not usernames:
+            word_match = re.search(r'\b([A-Za-z][A-Za-z0-9_]{2,30})\b', text)
+            if word_match:
+                word = word_match.group(1)
+                # Don't use common investigative words as usernames
+                if word.lower() not in ("who", "what", "where", "when", "why", "how",
+                    "the", "and", "for", "with", "company", "person", "domain",
+                    "investigate", "research", "search", "find", "look", "check"):
+                    usernames.append(word)
+
         return list(dict.fromkeys(usernames))  # Deduplicated
 
 

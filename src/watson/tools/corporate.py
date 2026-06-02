@@ -6,7 +6,7 @@ import urllib.parse
 
 from .base import OSINTTool
 from .registry import registry
-from ..core.models import Finding, FindingSource
+from ..core.models import Finding, FindingSeverity, FindingSource
 from ..utils.http import get_client
 
 
@@ -99,8 +99,15 @@ class CorporateTool(OSINTTool):
                     query=company,
                     result_count=len(results),
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            return self._make_finding(
+                title=f"⚠️ OpenCorporates lookup failed for '{company}'",
+                description=f"API error: {str(e)[:200]}. Try manually: https://opencorporates.com/companies?q={urllib.parse.quote(company)}",
+                evidence=[f"https://opencorporates.com/companies?q={urllib.parse.quote(company)}"],
+                confidence=0.1,
+                severity=FindingSeverity.LOW,
+                query=company,
+            )
         return None
 
     async def _check_sanctions(self, name: str) -> list[Finding]:
@@ -212,11 +219,18 @@ class CorporateTool(OSINTTool):
         # Strip quotes
         stripped = re.sub(r'["\']', '', stripped)
 
-        # Find capitalized name sequences (2-3 words)
-        match = re.search(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\b', stripped)
+        # Find capitalized name sequences (1-3 words)
+        match = re.search(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b', stripped)
         if match:
             name = match.group(1).strip()
-            if len(name) > 3:
+            if len(name) > 2:
+                return name
+
+        # Fallback: any alphanumeric entity (e.g. "OpenAI", "DeepSeek", "Company123")
+        match = re.search(r'\b([A-Za-z][A-Za-z0-9]{2,}(?:\s+[A-Za-z][A-Za-z0-9]{1,}){0,2})\b', stripped)
+        if match:
+            name = match.group(1).strip()
+            if name.lower() not in ("who", "what", "where", "when", "why", "how", "the", "and", "for", "with"):
                 return name
 
         return None

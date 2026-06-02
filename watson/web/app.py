@@ -2,10 +2,10 @@
 Watson Web — FastAPI product shell.
 
 Thin layer that:
-- Serves the Watson-branded chat UI
+- Serves the chat UI
 - Routes investigation requests to the engine (via agent adapter)
 - Publishes completed cases to MCP (free tier)
-- Has auth and billing hooks for premium tier (placeholder)
+- Auth (GitHub OAuth) and billing stubs for paid features
 
 Watson is agent-agnostic — the AdapterFactory creates the right adapter
 from config (Hermes, OpenClaw, Direct LLM, etc.).

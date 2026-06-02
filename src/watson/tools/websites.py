@@ -7,7 +7,7 @@ from datetime import datetime
 
 from .base import OSINTTool
 from .registry import registry
-from ..core.models import Finding, FindingSource
+from ..core.models import Finding, FindingSeverity, FindingSource
 from ..utils.http import get_client
 from ..utils.helpers import extract_domain
 
@@ -65,10 +65,13 @@ class WebsitesTool(OSINTTool):
             }
             data = await client.get_json(self.WAYBACK_CDX, params=params)
 
-            if isinstance(data, list) and data:
-                # Get first and most recent snapshots
-                first = data[-1] if len(data) > 0 else data[0]
-                latest = data[0]
+            if isinstance(data, list) and len(data) > 1:
+                # Skip header row (first element is column names)
+                rows = data[1:] if isinstance(data[0], list) and data[0][0] == "timestamp" else data
+                if not rows:
+                    return None
+                first = rows[-1]
+                latest = rows[0]
 
                 first_date = datetime.strptime(first[0][:8], "%Y%m%d").strftime("%b %d, %Y")
                 latest_date = datetime.strptime(latest[0][:8], "%Y%m%d").strftime("%b %d, %Y")
@@ -89,14 +92,19 @@ class WebsitesTool(OSINTTool):
                     first_snapshot=first[0],
                     latest_snapshot=latest[0],
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            return self._make_finding(
+                title=f"⚠️ Wayback Machine unavailable for {domain}",
+                description=f"Could not retrieve archive data: {str(e)[:200]}",
+                confidence=0.0,
+                severity=FindingSeverity.LOW,
+            )
         return None
 
     async def _check_crtsh(self, client, domain: str) -> Finding | None:
         """Check SSL certificate transparency logs via crt.sh."""
         try:
-            url = f"{self.CRTSH_API}?q=%.{domain}&output=json"
+            url = f"{self.CRTSH_API}?q=%25.{domain}&output=json"
             data = await client.get_json(url)
 
             if isinstance(data, list) and data:
@@ -122,8 +130,14 @@ class WebsitesTool(OSINTTool):
                     domain=domain,
                     subdomain_count=len(subdomains),
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            return self._make_finding(
+                title=f"⚠️ crt.sh lookup failed for {domain}",
+                description=f"SSL certificate lookup error: {str(e)[:200]}. Try manually: https://crt.sh/?q=%.{domain}",
+                evidence=[f"https://crt.sh/?q=%.{domain}"],
+                confidence=0.1,
+                severity=FindingSeverity.LOW,
+            )
         return None
 
     async def _check_dns(self, client, domain: str) -> Finding | None:
@@ -154,17 +168,41 @@ class WebsitesTool(OSINTTool):
                     confidence=0.9,
                     domain=domain,
                 )
-        except Exception:
-            pass
-        return None
+            else:
+                return self._make_finding(
+                    title=f"⚠️ No DNS records found for {domain}",
+                    description="DNS-over-HTTPS returned no records. Domain may not resolve or is parked.",
+                    confidence=0.3,
+                    severity=FindingSeverity.LOW,
+                )
+        except Exception as e:
+            return self._make_finding(
+                title=f"⚠️ DNS lookup failed for {domain}",
+                description=f"DNS-over-HTTPS error: {str(e)[:200]}",
+                confidence=0.0,
+                severity=FindingSeverity.LOW,
+            )
 
     def _extract_domains(self, text: str) -> list[str]:
-        """Extract domain names from text."""
+        """Extract domain names from text. Falls back to deriving domain from single-word queries."""
         import re
 
         pattern = r"(?:https?://)?(?:www\.)?([a-zA-Z0-9][-a-zA-Z0-9]*\.[a-zA-Z]{2,}(?:\.[a-zA-Z]{2,})?)"
         matches = re.findall(pattern, text)
-        return list(dict.fromkeys(matches))
+        domains = list(dict.fromkeys(matches))
+
+        # If no domain found and query looks like a company/product name, derive it
+        if not domains:
+            # Check for single capitalized word or CamelCase (e.g. "OpenAI", "DeepSeek")
+            word_match = re.search(r'\b([A-Za-z][A-Za-z0-9]{2,}(?:\.[a-z]{2,})?)\b', text)
+            if word_match:
+                word = word_match.group(1).lower()
+                if '.' not in word:
+                    domains = [f"{word}.com", f"{word}.org", f"{word}.io"]
+                else:
+                    domains = [word]
+
+        return domains
 
 
 # Register

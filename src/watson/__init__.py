@@ -1,5 +1,10 @@
 """Watson — OSINT Research Agent.
 
-Deploy the Bellingcat investigation toolkit. Investigate anything, everywhere, in parallel.
+"When you have eliminated the impossible,
+whatever remains, however improbable,
+must be the truth." — Sherlock Holmes
+
+Autonomous open-source intelligence with 338 Bellingcat tools.
+Knowledge graph, lead tracking, recursive investigation.
 """
-__version__ = "0.1.0"
+__version__ = "0.2.0"

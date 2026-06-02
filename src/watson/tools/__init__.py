@@ -16,6 +16,8 @@ from . import corporate
 from . import conflict
 from . import scraper
 from . import captcha
+from . import bellingcat
+from . import browser
 
 __all__ = [
     "satellite",
@@ -28,4 +30,5 @@ __all__ = [
     "conflict",
     "scraper",
     "captcha",
+    "bellingcat",
 ]

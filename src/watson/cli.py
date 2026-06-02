@@ -16,12 +16,60 @@ from rich.markdown import Markdown
 from rich import box
 
 from . import __version__
-from .core.engine import Engine
+from .banner import BANNER_TEXT, WELCOME_QUOTES
 from .core.models import FindingSeverity, FindingSource
 from .tools.registry import registry
 from .tools import *  # noqa: F401, F403 — load tool modules to register them
+from . import config
+from . import setup as setup_module
 
 console = Console()
+
+
+def _check_first_run() -> None:
+    """On first run: show silhouette, welcome, and launch setup wizard."""
+    if not config.is_first_run():
+        return
+
+    # In non-interactive mode, init default config and skip wizard
+    if not sys.stdin.isatty():
+        config.init_config()
+        return
+
+    # Show silhouette on every startup regardless
+    console.clear()
+    console.print()
+
+    import random
+    quote = random.choice(WELCOME_QUOTES)
+    console.print(f"  [dim italic]{quote}[/dim italic]")
+
+    console.print()
+    console.print(
+        Panel.fit(
+            "[bold]Welcome to Watson, the open-source OSINT investigator.[/bold]\n\n"
+            "It looks like this is your first run. Let's get you set up.\n"
+            "[dim]You can skip any step — defaults work out of the box.[/dim]",
+            title="🕵️  First Run Detected",
+            border_style="gold1",
+        )
+    )
+    console.print()
+
+    setup_module.run_setup()
+
+
+def _show_banner() -> None:
+    """Show the Sherlock silhouette + Watson banner on terminal launch."""
+    console.clear()
+    console.print()
+    console.print(
+        BANNER_TEXT.format(
+            version=__version__,
+            tool_count=registry.tool_count,
+        ),
+        style="bold white",
+    )
 
 
 SEVERITY_COLORS = {
@@ -44,117 +92,103 @@ def _severity_icon(sev: FindingSeverity) -> str:
     return icons.get(sev, "•")
 
 
-async def _run_investigation(query: str, tools: list[str] | None, output: str | None) -> None:
-    """Run the investigation and render results."""
-    engine = Engine()
+async def _run_investigation(query: str, depth: int, output: str | None) -> None:
+    """Run autonomous investigation with real-time progress."""
+    from .agent import OSINTAgent
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        transient=True,
-    ) as progress:
-        task = progress.add_task(
-            f"[bold gold1]Investigating: {query[:80]}...", total=None
-        )
-        report = await engine.investigate(query, tools=tools)
-        progress.remove_task(task)
+    agent = OSINTAgent(depth=depth)
+    events = await agent.investigate(query)
 
-    # Render report
-    console.print()
-    console.rule("[bold gold1]🔍 WATSON INVESTIGATION REPORT")
-    console.print()
+    for evt in events:
+        etype = evt["event"]
+        data = evt["data"]
 
-    # Summary panel
-    stats = f"Findings: [bold]{report.total_findings}[/bold] | Sources: [bold]{len(report.by_source)}[/bold] categories"
-    if report.by_severity:
-        sev_parts = []
-        for sev, count in sorted(report.by_severity.items()):
-            icon = _severity_icon(FindingSeverity(sev))
-            sev_parts.append(f"{icon} {count} {sev}")
-        stats += " | " + " ".join(sev_parts)
-
-    console.print(Panel(stats, title="Summary", border_style="gold1"))
-
-    # Findings by severity
-    if report.findings:
-        console.print()
-        console.print("[bold]Findings[/bold]", style="underline")
-        for finding in report.findings:
-            icon = _severity_icon(finding.severity)
-            color = SEVERITY_COLORS.get(finding.severity, "")
-            console.print(f"  {icon} [bold]{finding.title}[/bold] [{finding.source.value}]")
-            if finding.description:
-                for line in finding.description.split("\n"):
-                    console.print(f"    {line}")
-            if finding.evidence:
-                for ev in finding.evidence[:2]:
-                    console.print(f"    → [dim link={ev}]{ev[:80]}[/dim link]")
+        if etype == "progress":
+            console.print(f"  [dim]⏳ {data['message']}[/dim]")
+        elif etype == "plan":
+            console.print(Panel(
+                f"Target: [bold]{data['seed']}[/bold] ({data['type']})\n"
+                f"Categories: {', '.join(data['categories'][:6])}\n"
+                f"Depth: {data['depth']}",
+                title="📋 Investigation Plan", border_style="gold1"
+            ))
+        elif etype == "findings":
+            tgt = data['target']
+            cnt = data['count']
+            depth_d = data['depth']
+            console.print(f"  [bold cyan]🔍 {tgt}[/bold cyan] — [green]{cnt} findings[/green] at depth {depth_d}")
+            for f in data.get("findings", [])[:5]:
+                sev = f.get("severity", "info")
+                icon = _severity_icon(FindingSeverity(sev) if sev in [s.value for s in FindingSeverity] else FindingSeverity.INFO)
+                console.print(f"    {icon} {f.get('title','')[:100]}")
+        elif etype == "leads":
+            leads = data.get("leads", [])
+            if leads:
+                lead_str = " ".join(f"[dim]{l['value'][:30]}[/dim]" for l in leads[:5])
+                console.print(f"  [yellow]🔗 {data['count']} leads:[/yellow] {lead_str}")
+        elif etype == "done":
             console.print()
+            console.print(Panel(
+                f"Findings: [bold green]{data['total_findings']}[/bold green] | "
+                f"Leads: [bold yellow]{data['total_leads']}[/bold yellow]\n"
+                f"Graph: {data['graph_stats']['nodes']} entities, {data['graph_stats']['edges']} relations\n"
+                f"Depth reached: {data['depth_reached']}",
+                title="✅ Investigation Complete", border_style="green"
+            ))
+        elif etype == "graph":
+            pass  # Silent graph updates
+        elif etype == "error":
+            console.print(f"  [red]⚠️ {data.get('message', 'Unknown error')}[/red]")
 
-    # Cross-references
-    if report.cross_references:
-        console.print()
-        console.print("[bold]Cross-References[/bold]", style="underline")
-        for cr in report.cross_references:
-            console.print(f"  🔗 [bold]{cr.title}[/bold]")
-            console.print(f"    {cr.description[:120]}")
+    console.rule("[dim]End of investigation")
 
-    # Tool stats
-    if report.tool_stats:
-        console.print()
-        table = Table(title="Tool Statistics", box=box.SIMPLE)
-        table.add_column("Tool", style="cyan")
-        table.add_column("Findings", justify="right", style="green")
-        for tool_name, count in sorted(report.tool_stats.items(), key=lambda x: -x[1]):
-            table.add_row(tool_name, str(count))
-        console.print(table)
-
-    # Save to file if requested
+    # Save if requested
     if output:
-        output_path = Path(output)
-        report_data = report.model_dump(mode="json")
-        output_path.write_text(json.dumps(report_data, indent=2, default=str))
-        console.print(f"\n[green]✓ Report saved to {output_path}[/green]")
-
-    console.print()
-    console.rule("[dim]End of report")
+        from pathlib import Path
+        import json as _json
+        opath = Path(output)
+        findings = []
+        for e in events:
+            if e["event"] == "findings":
+                findings.extend(e["data"].get("findings", []))
+        opath.write_text(_json.dumps({
+            "query": query, "depth": depth,
+            "findings": findings, "graph": agent.get_graph()
+        }, indent=2, default=str))
+        console.print(f"\n[green]✓ Report saved to {opath}[/green]")
 
 
 @click.group()
 @click.version_option(__version__, prog_name="watson")
 def main():
-    """🔍 Watson — OSINT Research Agent.
+    """🕵️  Watson — OSINT Research Agent.
 
-    Deploy the Bellingcat investigation toolkit.
-    Investigate anything, everywhere, in parallel.
+    "When you have eliminated the impossible,
+    whatever remains, however improbable,
+    must be the truth." — Sherlock Holmes
+
+    Autonomous open-source intelligence with 338 Bellingcat tools.
+    Knowledge graph, lead tracking, recursive investigation.
     """
     pass
 
 
 @main.command()
 @click.argument("query")
-@click.option(
-    "--tools", "-t",
-    multiple=True,
-    help="Specific tool categories to use (e.g., websites, corporate, people)",
-)
-@click.option(
-    "--output", "-o",
-    help="Save report to JSON file",
-)
-def investigate(query: str, tools: tuple[str, ...], output: str | None):
-    """Run an OSINT investigation.
+@click.option("--depth", "-d", default=1, type=int, help="Recursion depth (1-3). Higher = more leads investigated")
+@click.option("--output", "-o", help="Save report to JSON file")
+def investigate(query: str, depth: int, output: str | None):
+    """Run an autonomous OSINT investigation.
 
     \b
     Examples:
-      watson investigate "who owns suspicious-domain.com?"
-      watson investigate "company name ltd" --tools corporate websites
-      watson investigate "@username" -o report.json
+      watson investigate "Elon Musk"
+      watson investigate "openai.com" --depth 2
+      watson investigate "Tesla Inc" -d 1 -o report.json
     """
-    tool_list = list(tools) if tools else None
+    _check_first_run()
     try:
-        asyncio.run(_run_investigation(query, tool_list, output))
+        asyncio.run(_run_investigation(query, depth, output))
     except KeyboardInterrupt:
         console.print("\n[yellow]Investigation cancelled[/yellow]")
         sys.exit(0)
@@ -251,6 +285,109 @@ def captcha(image_path: str, api_base: str | None, api_key: str | None, model: s
         console.print(f"\n[red]❌ Failed: {result.get('error', 'Unknown error')}[/red]")
 
 
+@main.command()
+def setup():
+    """Configure Watson — API keys, defaults, and preferences."""
+    from . import config as cfg
+    from . import setup as setup_mod
+
+    if not cfg.is_first_run():
+        console.print()
+        console.print(
+            Panel.fit(
+                f"Config already exists at [bold]{cfg.config_path()}[/bold]\n"
+                "Running setup will update your existing settings.",
+                title="🕵️  Watson Setup",
+                border_style="gold1",
+            )
+        )
+        console.print()
+
+    setup_mod.run_setup()
+
+
+@main.command()
+@click.option("--port", "-p", default=8777, help="Port to serve on")
+@click.option("--host", "-h", default="0.0.0.0", help="Host to bind to")
+def web(port: int, host: str):
+    """Launch the Watson investigation dashboard."""
+    import os
+    import webbrowser
+    from pathlib import Path
+
+    _check_first_run()
+    _show_banner()
+
+    # Make sure the web package is importable
+    web_dir = Path(__file__).parent.parent / "web"
+    sys.path.insert(0, str(web_dir.parent))
+
+    try:
+        from web.app import app as flask_app
+    except ImportError:
+        console.print()
+        console.print("[red]Flask is not installed.[/red]")
+        console.print("Install it with: [bold]pip install flask[/bold]")
+        return
+
+    url = f"http://localhost:{port}"
+    console.print(f"  🖥  Dashboard: [bold link={url}]{url}[/bold link]")
+    console.print(f"  💬 Chat Agent: [bold link={url}/chat]{url}/chat[/bold link]")
+    console.print(f"  🔧 Tools: {registry.tool_count} modules · 338 Bellingcat tools")
+    console.print(f"  🧠 Knowledge Graph: persistent entity tracking")
+    console.print()
+    console.print("[dim]Press Ctrl+C to stop[/dim]")
+
+    # Open browser
+    try:
+        webbrowser.open(url)
+    except Exception:
+        pass
+
+    flask_app.run(host=host, port=port, debug=False, threaded=True)
+
+
+@main.command()
+@click.option("--port", "-p", default=8777, help="Port to serve on")
+@click.option("--host", "-h", default="0.0.0.0", help="Host to bind to")
+def chat(port: int, host: str):
+    """Launch the Watson chat agent (alias for web)."""
+    import os
+    import webbrowser
+    from pathlib import Path
+
+    _check_first_run()
+    _show_banner()
+
+    web_dir = Path(__file__).parent.parent / "web"
+    sys.path.insert(0, str(web_dir.parent))
+
+    try:
+        from web.app import app as flask_app
+    except ImportError:
+        console.print()
+        console.print("[red]Flask is not installed.[/red]")
+        console.print("Install it with: [bold]pip install flask[/bold]")
+        return
+
+    url = f"http://localhost:{port}/chat"
+    console.print(f"  💬 Chat Agent: [bold link={url}]{url}[/bold link]")
+    console.print(f"  🖥  Dashboard: [bold link=http://localhost:{port}]{'http://localhost:' + str(port)}[/bold link]")
+    console.print()
+    console.print("[dim]Opening browser... Press Ctrl+C to stop[/dim]")
+
+    try:
+        webbrowser.open(url)
+    except Exception:
+        pass
+
+    flask_app.run(host=host, port=port, debug=False, threaded=True)
+
+
 def cli():
     """Entry point for console_scripts."""
+    main()
+
+
+if __name__ == "__main__":
     main()

@@ -1,0 +1,205 @@
+{
+  "case": "deepmind",
+  "exported_at": "2026-06-01T14:17:32.108014",
+  "report": {
+    "query": "investigate relationship between Deepmind and the US department of war",
+    "findings": 8,
+    "sources": 3,
+    "by_severity": {
+      "info": 8
+    },
+    "by_source": {
+      "conflict": 3,
+      "corporate": 1,
+      "satellite": 1
+    },
+    "summary": "## Investigation Summary\n\n**Query:** investigate relationship between Deepmind and the US department of war\n**Findings:** 8 (5 direct, 3 cross-referenced)\n**Sources:** 3 tool categories\n**High-confidence findings:** 4\n\n### Top Findings\n- \ud83d\udfe2 **\ud83d\udcca ACLED conflict data: investigate relationship between Deepmind and the US departm** (conflict) \u2014 The Armed Conflict Location & Event Data Project (ACLED) tracks political violence and protest events worldwide. Use the\n- \ud83d\udfe2 **\ud83d\uddfa Live conflict map: investigate relationship between Deepmind and the US departm** (conflict) \u2014 [LiveUAMap](https://liveuamap.com/) provides real-time conflict monitoring with geolocated events. Search for 'investiga\n- \ud83d\udfe2 **\ud83d\udcca SEC EDGAR search ready: relationship between Deepmind** (corporate) \u2014 Click to search SEC filings for this company.\n- \ud83d\udfe2 **\ud83d\udce1 OSINT conflict resources for investigate relationship between Deepmind and the US departm** (conflict) \u2014 Recommended monitoring resources:\n- [LiveUAMap](https://liveuamap.com/?q=investigate relationship between Deepmind and t\n- \ud83d\udd34 **Timeout in satellite tool** (satellite) \u2014 Investigation timed out after 25.0s\n\n### Cross-References\n- \ud83d\udd17 Link: \ud83d\uddfa Live conflict map: investigate relationship between Deepmind and the US departm \u2194 \ud83d\udcca SEC EDGAR search ready: relationship between Deepmind\n- \ud83d\udd17 Link: \ud83d\udcca ACLED conflict data: investigate relationship between Deepmind and the US departm \u2194 \ud83d\udcca SEC EDGAR search ready: relationship between Deepmind\n- \ud83d\udd17 Link: \ud83d\udce1 OSINT conflict resources for investigate relationship between Deepmind and the US departm \u2194 \ud83d\udcca SEC EDGAR search ready: relationship between Deepmind",
+    "generated_at": "2026-06-01T14:11:29.248136",
+    "findings_list": [
+      {
+        "id": "conflict-c7bb5747",
+        "title": "\ud83d\udcca ACLED conflict data: investigate relationship between Deepmind and the US departm",
+        "description": "The Armed Conflict Location & Event Data Project (ACLED) tracks political violence and protest events worldwide. Use their dashboard to filter by location, date, and event type.",
+        "source": "conflict",
+        "tool": "conflict-monitor",
+        "severity": "info",
+        "confidence": 0.85,
+        "evidence": [
+          "https://acleddata.com/dashboard/#/dashboard",
+          "https://acleddata.com/data-export-tool/"
+        ]
+      },
+      {
+        "id": "conflict-d3db7cca",
+        "title": "\ud83d\uddfa Live conflict map: investigate relationship between Deepmind and the US departm",
+        "description": "[LiveUAMap](https://liveuamap.com/) provides real-time conflict monitoring with geolocated events. Search for 'investigate relationship between Deepmind and the US departm' on the map to see recent incidents, frontlines, and event timelines.",
+        "source": "conflict",
+        "tool": "conflict-monitor",
+        "severity": "info",
+        "confidence": 0.8,
+        "evidence": [
+          "https://liveuamap.com/?q=investigate relationship between Deepmind and the US departm",
+          "https://liveuamap.com/"
+        ]
+      },
+      {
+        "id": "corporate-4196ce31",
+        "title": "\ud83d\udcca SEC EDGAR search ready: relationship between Deepmind",
+        "description": "Click to search SEC filings for this company.",
+        "source": "corporate",
+        "tool": "corporate-finance",
+        "severity": "info",
+        "confidence": 0.7,
+        "evidence": [
+          "https://www.sec.gov/cgi-bin/browse-edgar?company=relationship%20between%20Deepmind"
+        ]
+      },
+      {
+        "id": "conflict-ec0b01a6",
+        "title": "\ud83d\udce1 OSINT conflict resources for investigate relationship between Deepmind and the US departm",
+        "description": "Recommended monitoring resources:\n- [LiveUAMap](https://liveuamap.com/?q=investigate relationship between Deepmind and the US departm) \u2014 real-time mapped events\n- [ACLED Dashboard](https://acleddata.com/dashboard/) \u2014 structured event data\n- [NASA FIRMS](https://firms.modaps.eosdis.nasa.gov/map/) \u2014 satellite fire/thermal detection\n- [Flightradar24](https://www.flightradar24.com/) \u2014 aircraft tracking near conflict zones\n- [MarineTraffic](https://www.marinetraffic.com/) \u2014 vessel movements",
+        "source": "conflict",
+        "tool": "conflict-monitor",
+        "severity": "info",
+        "confidence": 0.7,
+        "evidence": []
+      },
+      {
+        "id": "timeout-satellite",
+        "title": "Timeout in satellite tool",
+        "description": "Investigation timed out after 25.0s",
+        "source": "satellite",
+        "tool": "satellite-maps",
+        "severity": "info",
+        "confidence": 0,
+        "evidence": []
+      }
+    ],
+    "cross_references": [
+      {
+        "id": "xref-conflict-corporate-0",
+        "title": "Link: \ud83d\uddfa Live conflict map: investigate relationship between Deepmind and the US departm \u2194 \ud83d\udcca SEC EDGAR search ready: relationship between Deepmind",
+        "description": "Findings from conflict and corporate share common elements: between, deepmind, relationship",
+        "evidence": [
+          "https://liveuamap.com/?q=investigate relationship between Deepmind and the US departm",
+          "https://www.sec.gov/cgi-bin/browse-edgar?company=relationship%20between%20Deepmind"
+        ]
+      },
+      {
+        "id": "xref-conflict-corporate-1",
+        "title": "Link: \ud83d\udcca ACLED conflict data: investigate relationship between Deepmind and the US departm \u2194 \ud83d\udcca SEC EDGAR search ready: relationship between Deepmind",
+        "description": "Findings from conflict and corporate share common elements: between, deepmind, relationship",
+        "evidence": [
+          "https://acleddata.com/dashboard/#/dashboard",
+          "https://www.sec.gov/cgi-bin/browse-edgar?company=relationship%20between%20Deepmind"
+        ]
+      },
+      {
+        "id": "xref-conflict-corporate-2",
+        "title": "Link: \ud83d\udce1 OSINT conflict resources for investigate relationship between Deepmind and the US departm \u2194 \ud83d\udcca SEC EDGAR search ready: relationship between Deepmind",
+        "description": "Findings from conflict and corporate share common elements: between, deepmind, relationship",
+        "evidence": [
+          "https://www.sec.gov/cgi-bin/browse-edgar?company=relationship%20between%20Deepmind"
+        ]
+      }
+    ],
+    "tool_stats": {
+      "satellite-maps": {
+        "status": "success",
+        "finding_count": 1,
+        "findings": [
+          {
+            "title": "Timeout in satellite tool",
+            "severity": "info",
+            "confidence": 0,
+            "description": "Investigation timed out after 25.0s",
+            "evidence": []
+          }
+        ]
+      },
+      "geolocation": {
+        "status": "empty",
+        "finding_count": 0,
+        "findings": []
+      },
+      "image-video": {
+        "status": "empty",
+        "finding_count": 0,
+        "findings": []
+      },
+      "captcha-solver": {
+        "status": "empty",
+        "finding_count": 0,
+        "findings": []
+      },
+      "social-media": {
+        "status": "empty",
+        "finding_count": 0,
+        "findings": []
+      },
+      "people-search": {
+        "status": "empty",
+        "finding_count": 0,
+        "findings": []
+      },
+      "scraper": {
+        "status": "empty",
+        "finding_count": 0,
+        "findings": []
+      },
+      "websites-domains": {
+        "status": "empty",
+        "finding_count": 0,
+        "findings": []
+      },
+      "corporate-finance": {
+        "status": "success",
+        "finding_count": 1,
+        "findings": [
+          {
+            "title": "\ud83d\udcca SEC EDGAR search ready: relationship between Deepmind",
+            "severity": "info",
+            "confidence": 0.7,
+            "description": "Click to search SEC filings for this company.",
+            "evidence": [
+              "https://www.sec.gov/cgi-bin/browse-edgar?company=relationship%20between%20Deepmind"
+            ]
+          }
+        ]
+      },
+      "conflict-monitor": {
+        "status": "success",
+        "finding_count": 3,
+        "findings": [
+          {
+            "title": "\ud83d\uddfa Live conflict map: investigate relationship between Deepmind and the US departm",
+            "severity": "info",
+            "confidence": 0.8,
+            "description": "[LiveUAMap](https://liveuamap.com/) provides real-time conflict monitoring with geolocated events. Search for 'investigate relationship between Deepmind and the US departm' on the map to see recent in",
+            "evidence": [
+              "https://liveuamap.com/?q=investigate relationship between Deepmind and the US departm",
+              "https://liveuamap.com/"
+            ]
+          },
+          {
+            "title": "\ud83d\udcca ACLED conflict data: investigate relationship between Deepmind and the US departm",
+            "severity": "info",
+            "confidence": 0.85,
+            "description": "The Armed Conflict Location & Event Data Project (ACLED) tracks political violence and protest events worldwide. Use their dashboard to filter by location, date, and event type.",
+            "evidence": [
+              "https://acleddata.com/dashboard/#/dashboard",
+              "https://acleddata.com/data-export-tool/"
+            ]
+          },
+          {
+            "title": "\ud83d\udce1 OSINT conflict resources for investigate relationship between Deepmind and the US departm",
+            "severity": "info",
+            "confidence": 0.7,
+            "description": "Recommended monitoring resources:\n- [LiveUAMap](https://liveuamap.com/?q=investigate relationship between Deepmind and the US departm) \u2014 real-time mapped events\n- [ACLED Dashboard](https://acleddata.c",
+            "evidence": []
+          }
+        ]
+      }
+    }
+  }
+}

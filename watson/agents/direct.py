@@ -1,8 +1,6 @@
 """
-Direct LLM adapter — no agent engine required. Calls an LLM API directly.
-Best for quick start when Hermes/OpenClaw aren't installed.
-Uses DuckDuckGo for real web search (free, no API key needed).
-Limited to web search and basic reasoning — no browser, vision, or terminal.
+Direct LLM adapter — any OpenAI-compatible API.
+Uses DuckDuckGo for real web search (free, no API key).
 """
 
 from __future__ import annotations
@@ -24,29 +22,28 @@ from .base import (
     VisionResult,
 )
 
-DEFAULT_API_BASE = "https://api.deepseek.com/v1"
+DEFAULT_API_BASE = "https://api.openai.com/v1"
 DUCKDUCKGO_HTML = "https://html.duckduckgo.com/html/"
 
 
 class DirectAdapter(AgentAdapter):
-    """Adapter that calls an LLM API directly (no agent engine)."""
+    """LLM-agnostic adapter — any OpenAI-compatible API + DuckDuckGo search."""
 
     name = "direct"
-    description = "Direct LLM + DuckDuckGo — API key only, no local agent install"
+    description = "Any OpenAI-compatible API + DuckDuckGo search"
 
     def __init__(
         self,
         api_key: str = "",
-        model: str = "deepseek-chat",
+        model: str = "gpt-4o",
         api_base: str | None = None,
     ):
-        self.api_key = api_key or os.environ.get(
-            "WATSON_API_KEY",
-            os.environ.get("DEEPSEEK_API_KEY", ""),
-        )
-        self.model = model
-        self.api_base = api_base or os.environ.get(
-            "DEEPSEEK_API_BASE", DEFAULT_API_BASE
+        self.api_key = api_key or os.environ.get("WATSON_API_KEY", "")
+        self.model = model or os.environ.get("WATSON_MODEL", "gpt-4o")
+        self.api_base = (
+            api_base
+            or os.environ.get("WATSON_API_BASE")
+            or DEFAULT_API_BASE
         )
 
     async def _call_llm(

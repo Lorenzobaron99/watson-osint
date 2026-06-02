@@ -26,6 +26,9 @@ class FindingSource(str, Enum):
     WEBSITES = "websites"
     CORPORATE = "corporate"
     CONFLICT = "conflict"
+    OSINT = "osint"
+    BELLINGCAT = "bellingcat"
+    SOCMINT = "socmint"
     CROSS_REF = "cross_ref"
 
 

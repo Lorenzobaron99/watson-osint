@@ -1,0 +1,188 @@
+{
+  "report_type": "OSINT Intelligence Brief",
+  "case": "deepmind",
+  "query": "Elon Musk",
+  "generated_at": "2026-06-01T14:25:50.668946",
+  "risk_assessment": {
+    "score": 1.5,
+    "level": "\ud83d\udfe2 LOW",
+    "justification": "Limited findings of concern. Routine monitoring sufficient."
+  },
+  "executive_summary": "Investigation of \"Elon Musk\" yielded 11 findings across 4 sources, including 0 high or critical items. Key areas of concern involve people, conflict. Review findings below for detailed analysis and recommended actions.",
+  "key_findings": [
+    {
+      "title": "\ud83d\udcd6 Wikipedia: Elon Musk",
+      "severity": "info",
+      "confidence": 0.9,
+      "source": "people",
+      "tool": "scraper",
+      "analysis": "Elon Reeve Musk ( / \u02c8 i\u02d0 l \u0252 n / EE -lon ; born June 28, 1971) is a businessman and former public official known for his leadership of Tesla and SpaceX . Musk has been the wealthiest person in the world since 2025; as of June 2026, [update] Forbes estimates his net worth to be US$834 billion.\n\n**Born:** Elon Reeve Musk ( 1971-06-28 ) June 28, 1971 (age 54) Pretoria , South Africa\n**Citizenship:** .mw-parser-output .plainlist ol,.mw-parser-output .plainlist ul{line-height:inherit;list-style:none;margin:0;padding:0}.\n**Education:** University of Pennsylvania ( BA , BS )\n**Occupations:** CEO and product architect of Tesla Founder, CEO, and chief engineer of SpaceX Founder and CEO of xAI Founder and CTO of \n**Political party:** Independent [ a ]\n**Spouses:** .mw-parser-output .marriage-line-margin2px{line-height:0;margin-bottom:-2px}.mw-parser-output .marriage-line-margin3px{l\n**Children:** 14, [ b ] including Vivian Wilson\n**Parents:** Errol Musk (father) Maye Musk (mother)\n**Relatives:** Musk family\n**Awards:** Full list",
+      "evidence": [
+        "https://en.wikipedia.org/wiki/Elon_Musk"
+      ]
+    },
+    {
+      "title": "\ud83d\udea8 SANCTIONED: Elon Musk \u2014 OpenSanctions",
+      "severity": "info",
+      "confidence": 0.9,
+      "source": "people",
+      "tool": "scraper",
+      "analysis": "Found 5 entries in OpenSanctions:\n- About OpenSanctions\n- Creative Commons 4.0 Attribution NonCommercial\n- Elon Musk\n- Elon Musk Revocable Trust\n- Alexandra Musk",
+      "evidence": [
+        "https://www.opensanctions.org/search/?q=Elon%20Musk"
+      ]
+    },
+    {
+      "title": "\ud83d\udcd6 Wikipedia: Elon Musk",
+      "severity": "info",
+      "confidence": 0.9,
+      "source": "people",
+      "tool": "scraper",
+      "analysis": "Elon Reeve Musk ( / \u02c8 i\u02d0 l \u0252 n / EE -lon ; born June 28, 1971) is a businessman and former public official known for his leadership of Tesla and SpaceX . Musk has been the wealthiest person in the world since 2025; as of June 2026, [update] Forbes estimates his net worth to be US$834 billion.\n\n**Born:** Elon Reeve Musk ( 1971-06-28 ) June 28, 1971 (age 54) Pretoria , South Africa\n**Citizenship:** .mw-parser-output .plainlist ol,.mw-parser-output .plainlist ul{line-height:inherit;list-style:none;margin:0;padding:0}.\n**Education:** University of Pennsylvania ( BA , BS )\n**Occupations:** CEO and product architect of Tesla Founder, CEO, and chief engineer of SpaceX Founder and CEO of xAI Founder and CTO of \n**Political party:** Independent [ a ]\n**Spouses:** .mw-parser-output .marriage-line-margin2px{line-height:0;margin-bottom:-2px}.mw-parser-output .marriage-line-margin3px{l\n**Children:** 14, [ b ] including Vivian Wilson\n**Parents:** Errol Musk (father) Maye Musk (mother)\n**Relatives:** Musk family\n**Awards:** Full list",
+      "evidence": [
+        "https://en.wikipedia.org/wiki/Elon_Musk"
+      ]
+    },
+    {
+      "title": "\ud83d\udea8 SANCTIONED: Elon Musk \u2014 OpenSanctions",
+      "severity": "info",
+      "confidence": 0.9,
+      "source": "people",
+      "tool": "scraper",
+      "analysis": "Found 5 entries in OpenSanctions:\n- About OpenSanctions\n- Creative Commons 4.0 Attribution NonCommercial\n- Elon Musk\n- Elon Musk Revocable Trust\n- Alexandra Musk",
+      "evidence": [
+        "https://www.opensanctions.org/search/?q=Elon%20Musk"
+      ]
+    },
+    {
+      "title": "\ud83d\udcca ACLED conflict data: Elon Musk",
+      "severity": "info",
+      "confidence": 0.85,
+      "source": "conflict",
+      "tool": "conflict-monitor",
+      "analysis": "The Armed Conflict Location & Event Data Project (ACLED) tracks political violence and protest events worldwide. Use their dashboard to filter by location, date, and event type.",
+      "evidence": [
+        "https://acleddata.com/dashboard/#/dashboard",
+        "https://acleddata.com/data-export-tool/"
+      ]
+    },
+    {
+      "title": "\ud83d\uddfa Live conflict map: Elon Musk",
+      "severity": "info",
+      "confidence": 0.8,
+      "source": "conflict",
+      "tool": "conflict-monitor",
+      "analysis": "[LiveUAMap](https://liveuamap.com/) provides real-time conflict monitoring with geolocated events. Search for 'Elon Musk' on the map to see recent incidents, frontlines, and event timelines.",
+      "evidence": [
+        "https://liveuamap.com/?q=Elon Musk",
+        "https://liveuamap.com/"
+      ]
+    },
+    {
+      "title": "\ud83d\udce1 OSINT conflict resources for Elon Musk",
+      "severity": "info",
+      "confidence": 0.7,
+      "source": "conflict",
+      "tool": "conflict-monitor",
+      "analysis": "Recommended monitoring resources:\n- [LiveUAMap](https://liveuamap.com/?q=Elon Musk) \u2014 real-time mapped events\n- [ACLED Dashboard](https://acleddata.com/dashboard/) \u2014 structured event data\n- [NASA FIRMS](https://firms.modaps.eosdis.nasa.gov/map/) \u2014 satellite fire/thermal detection\n- [Flightradar24](https://www.flightradar24.com/) \u2014 aircraft tracking near conflict zones\n- [MarineTraffic](https://www.marinetraffic.com/) \u2014 vessel movements",
+      "evidence": []
+    },
+    {
+      "title": "\ud83d\udc64 Person: Elon Musk",
+      "severity": "info",
+      "confidence": 0.5,
+      "source": "people",
+      "tool": "people-search",
+      "analysis": "Searching for **Elon Musk** across public records and platforms:\n- [Google search](https://www.google.com/search?q=%22Elon%20Musk%22)\n- [LinkedIn](https://www.linkedin.com/search/results/people/?keywords=Elon%20Musk)\n- [OpenSanctions](https://opensanctions.org/search/?q=Elon%20Musk)\n- [Wikipedia](https://en.wikipedia.org/wiki/Special:Search?search=Elon%20Musk)\n\nTo investigate further, try:\n`watson investigate \"Elon Musk email\"` for email breach check\n`watson investigate \"Elon Musk company\"` for corporate ties",
+      "evidence": [
+        "https://www.google.com/search?q=%22Elon%20Musk%22",
+        "https://www.linkedin.com/search/results/people/?keywords=Elon%20Musk",
+        "https://opensanctions.org/search/?q=Elon%20Musk"
+      ]
+    },
+    {
+      "title": "\ud83d\udc64 Person: Elon Musk",
+      "severity": "info",
+      "confidence": 0.5,
+      "source": "people",
+      "tool": "people-search",
+      "analysis": "Searching for **Elon Musk** across public records and platforms:\n- [Google search](https://www.google.com/search?q=%22Elon%20Musk%22)\n- [LinkedIn](https://www.linkedin.com/search/results/people/?keywords=Elon%20Musk)\n- [OpenSanctions](https://opensanctions.org/search/?q=Elon%20Musk)\n- [Wikipedia](https://en.wikipedia.org/wiki/Special:Search?search=Elon%20Musk)\n\nTo investigate further, try:\n`watson investigate \"Elon Musk email\"` for email breach check\n`watson investigate \"Elon Musk company\"` for corporate ties",
+      "evidence": [
+        "https://www.google.com/search?q=%22Elon%20Musk%22",
+        "https://www.linkedin.com/search/results/people/?keywords=Elon%20Musk",
+        "https://opensanctions.org/search/?q=Elon%20Musk"
+      ]
+    },
+    {
+      "title": "\ud83d\udd0d Entity search: Elon Musk",
+      "severity": "info",
+      "confidence": 0.5,
+      "source": "corporate",
+      "tool": "corporate-finance",
+      "analysis": "Searching corporate records and sanctions for **Elon Musk**:\n- [OpenCorporates](https://opencorporates.com/companies?q=Elon%20Musk)\n- [OpenSanctions](https://opensanctions.org/search/?q=Elon%20Musk)\n- [Google](https://www.google.com/search?q=Elon%20Musk+company+sanctions)",
+      "evidence": [
+        "https://opencorporates.com/companies?q=Elon%20Musk",
+        "https://opensanctions.org/search/?q=Elon%20Musk"
+      ]
+    },
+    {
+      "title": "Timeout in satellite tool",
+      "severity": "info",
+      "confidence": 0,
+      "source": "satellite",
+      "tool": "satellite-maps",
+      "analysis": "Investigation timed out after 25.0s",
+      "evidence": []
+    }
+  ],
+  "entities": {
+    "people": [
+      "Alexandra Musk",
+      "Creative Commons",
+      "Elon Musk",
+      "Elon Musk Elon Reeve Musk",
+      "Elon Musk Recommended",
+      "Elon Musk Revocable Trust",
+      "Elon Musk Searching",
+      "Elon Reeve Musk",
+      "Errol Musk",
+      "Event Data Project",
+      "Maye Musk",
+      "South Africa",
+      "Tesla Founder",
+      "Vivian Wilson"
+    ],
+    "domains": [
+      "acleddata.com",
+      "en.wikipedia.org",
+      "firms.modaps.eosdis.nasa.gov",
+      "liveuamap.com",
+      "opencorporates.com",
+      "opensanctions.org",
+      "www.flightradar24.com",
+      "www.google.com",
+      "www.linkedin.com",
+      "www.marinetraffic.com"
+    ]
+  },
+  "connections": [],
+  "recommended_actions": [
+    "Cross-reference identified individuals against sanctions lists and adverse media",
+    "Pull full corporate filings and check for beneficial ownership chains",
+    "Archive all evidence URLs with timestamps for chain of custody",
+    "Schedule 7-day follow-up investigation to track changes"
+  ],
+  "investigation_metadata": {
+    "total_findings": 11,
+    "sources_used": 4,
+    "by_severity": {
+      "info": 11
+    },
+    "by_source": {
+      "people": 6,
+      "conflict": 3,
+      "corporate": 1,
+      "satellite": 1
+    }
+  }
+}

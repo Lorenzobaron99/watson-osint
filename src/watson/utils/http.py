@@ -47,20 +47,25 @@ class BaseHTTPClient:
     def __init__(
         self,
         rate_limit: float = 1.0,
-        max_retries: int = 1,
-        timeout: float = 8.0,
+        max_retries: int = 2,
+        timeout: float = 20.0,
     ):
         self.rate_limiter = RateLimiter(rate_limit)
         self.max_retries = max_retries
         self.timeout = timeout
         self._client: Optional[httpx.AsyncClient] = None
+        self._last_error: str = ""  # Exposed for tools to report failures
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
             self._client = httpx.AsyncClient(
-                timeout=httpx.Timeout(self.timeout),
+                timeout=httpx.Timeout(self.timeout, connect=10.0),
                 follow_redirects=True,
-                headers={"User-Agent": random.choice(USER_AGENTS)},
+                headers={
+                    "User-Agent": random.choice(USER_AGENTS),
+                    "Accept": "application/json, text/plain, */*",
+                    "Accept-Language": "en-US,en;q=0.9",
+                },
             )
         return self._client
 
@@ -69,26 +74,31 @@ class BaseHTTPClient:
         await self.rate_limiter.acquire()
         client = await self._get_client()
 
-        for attempt in range(self.max_retries):
+        last_err = ""
+        for attempt in range(self.max_retries + 1):
             try:
                 response = await client.get(url, **kwargs)
                 response.raise_for_status()
                 return response
             except httpx.HTTPStatusError as e:
+                last_err = f"HTTP {e.response.status_code} from {url}"
                 if e.response.status_code == 429:
                     retry_after = float(e.response.headers.get("Retry-After", 5))
                     await asyncio.sleep(retry_after)
                     continue
-                if attempt == self.max_retries - 1:
+                if attempt == self.max_retries:
+                    self._last_error = last_err
                     raise
-                await asyncio.sleep(2**attempt)
-            except (httpx.RequestError, httpx.TimeoutException):
-                if attempt == self.max_retries - 1:
+                await asyncio.sleep(2 ** attempt)
+            except (httpx.RequestError, httpx.TimeoutException) as e:
+                last_err = f"Connection error for {url}: {e}"
+                if attempt == self.max_retries:
+                    self._last_error = last_err
                     raise
-                await asyncio.sleep(2**attempt)
+                await asyncio.sleep(2 ** attempt)
 
-        # Should be unreachable, but satisfy type checker
-        raise RuntimeError(f"Failed to fetch {url} after {self.max_retries} retries")
+        self._last_error = last_err
+        raise RuntimeError(f"Failed to fetch {url} after {self.max_retries + 1} attempts")
 
     async def get_json(self, url: str, **kwargs) -> dict | list:
         """GET and parse JSON response."""

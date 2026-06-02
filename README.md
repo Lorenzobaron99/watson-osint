@@ -1,16 +1,16 @@
 # 🕵️ Watson — OSINT Investigation Engine
 
-**Bellingcat-inspired. Graph-native. Agent-agnostic.**
+**Bellingcat-inspired. Graph-native. Agent-agnostic. LLM-agnostic.**
 
-Watson is not a chatbot. It's an investigation engine that runs multi-angle parallel OSINT investigations, cross-references findings, and builds a persistent knowledge graph that grows smarter with every case.
+Watson runs multi-angle parallel OSINT investigations, cross-references findings, and builds a persistent knowledge graph that grows smarter with every case. Think Sherlock, Maigret, and Holehe — but graph-connected.
 
-[Read the full architecture →](WATSON_ARCHITECTURE.md)
+[Read the architecture →](WATSON_ARCHITECTURE.md)
 
 ## Why Watson
 
 General agents answer your question and forget it. Watson investigates, correlates, and remembers.
 
-| | ChatGPT / Claude | Watson |
+|  | ChatGPT / Claude | Watson |
 |---|---|---|
 | State | Stateless | Persistent graph |
 | Memory | None across sessions | Every case feeds the graph |
@@ -18,132 +18,141 @@ General agents answer your question and forget it. Watson investigates, correlat
 | Community | N/A | MCP server for collective intel |
 | Sources | Sometimes | Every finding has source + confidence |
 
-**The moat is the graph.** Every investigation writes entities and relationships to a persistent knowledge graph. Future investigations auto-surface connections from past cases. No general agent has this.
-
 ## Quick Start
 
 ```bash
-# Clone
-git clone https://github.com/YOUR_USERNAME/watson-osint.git
+git clone https://github.com/Lorenzobaron99/watson-osint.git
 cd watson-osint
-
-# Install
 pip install -r requirements.txt
 
-# Choose your agent engine:
-#   Option A: Hermes (recommended — full toolset)
-#     Install Hermes Agent: https://hermes-agent.nousresearch.com
-#     Run: hermes api-server --port 8778
+# Pick your backend:
+#   Hermes (full toolset: web, browser, vision, terminal)
+#   export WATSON_AGENT=hermes
 #
-#   Option B: Direct LLM (quick start — API key only)
-#     export WATSON_AGENT=direct
-#     export DEEPSEEK_API_KEY=your_key
+#   Any OpenAI-compatible API (zero-setup)
+#   export WATSON_AGENT=direct
+#   export WATSON_API_KEY=sk-...
+#   export WATSON_API_BASE=https://api.openai.com/v1   # or any provider
+#   export WATSON_MODEL=gpt-4o                          # or claude, gemini, etc.
 
-# Start Watson
+# Terminal interface
 python -m watson.cli
-# or for web interface:
+
+# Web interface
 uvicorn watson.web.app:app --port 8000
 ```
 
-## Architecture
+## How It Works
 
 ```
 investigate "shadowy-company.com"
         │
         ▼
 ┌──────────────────────────────┐
-│ Phase 1: Semantic Analysis    │  Watson classifies target type,
-│   Target: domain              │  identifies investigation angles,
-│   Angles: WHOIS, DNS, SSL,    │  checks knowledge graph for
-│   Corporate, Historical, News │  prior findings
+│ Phase 1: Classify & Plan      │  Target type → investigation angles
+│   Domain → WHOIS, DNS, SSL,   │  Checks knowledge graph for
+│   Corporate, Historical, News │  connections from past cases
 └──────────┬───────────────────┘
            ▼
 ┌──────────────────────────────┐
 │ Phase 2: Parallel Dispatch    │  4-6 angles run simultaneously
-│   → crt.sh → 14 subdomains   │  via configured agent adapter
-│   → OpenCorporates → LLC     │  (Hermes, OpenClaw, Direct)
+│   → crt.sh → 14 subdomains   │  Results stream in real-time
+│   → OpenCorporates → LLC     │  via configured adapter
 │   → Wayback → 2018 owner     │
-│   → News → 3 articles        │
+│   → DuckDuckGo → 3 articles  │
 └──────────┬───────────────────┘
            ▼
 ┌──────────────────────────────┐
-│ Phase 3: Cross-Reference      │  Finds connections between
-│   "John Doe" in 2 sources     │  sources. Links to prior
-│   Sanctions link confirmed    │  cases in the knowledge graph
+│ Phase 3: Cross-Reference      │  Finds connections across sources
+│   "John Doe" in 2 sources →   │  Links to prior cases in graph
+│   Sanctions link confirmed    │  Confidence-scored
 └──────────┬───────────────────┘
            ▼
 ┌──────────────────────────────┐
 │ Output: Structured Briefing   │  Case saved as CASE-XXXX.md
-│   + Knowledge Graph update    │  Free tier: published to MCP
-│   + Follow-up questions       │  Premium: private
+│   + Knowledge Graph update    │  Entities indexed for future
+│   + Follow-up questions       │  cross-case intelligence
 └──────────────────────────────┘
 ```
 
-## Agent Agnostic
+## Backends
 
-Watson works with any agent engine:
+Watson is agent-agnostic and LLM-agnostic. Pick what works:
 
-| Adapter | Setup | Toolset |
+| Adapter | Setup | Capabilities |
 |---|---|---|
-| **Hermes** | Local install | Web search, browser, vision, terminal, MCP |
-| **Direct LLM** | API key only | Web search (LLM-powered), basic reasoning |
+| **Hermes** | Local install | Web search, browser, vision, terminal, MCP tools |
+| **Direct** | API key only | DuckDuckGo search + any OpenAI-compatible LLM |
 | **OpenClaw** | Coming soon | Full toolset |
-| **OpenHuman** | Coming soon | Full toolset |
 
-Set via `WATSON_AGENT` env var or choose during CLI onboarding.
+Set via `WATSON_AGENT` env var.
 
-## Tiers
+## OSINT Toolkit Integrations
 
-| | Free | Journalist ($50/mo) | Team ($200/mo) |
-|---|---|---|---|
-| Cases | Public | Private | Private |
-| MCP publishing | ✅ | ❌ | ❌ |
-| File upload | ❌ | ✅ | ✅ |
-| Seats | 1 | 1 | 5 |
-| API access | ❌ | ❌ | ✅ |
+Watson integrates with the open-source OSINT ecosystem:
 
-## MCP Server
+- **[Sherlock](https://github.com/sherlock-project/sherlock)** — username enumeration across 300+ platforms
+- **[Maigret](https://github.com/soxoj/maigret)** — deep username OSINT
+- **[Holehe](https://github.com/megadose/holehe)** — email → registered accounts
+- **[GHunt](https://github.com/mxrch/GHunt)** — Google account investigation
+- **[Blackbird](https://github.com/p1ngul1n0/blackbird)** — multi-platform username search
 
-The community knowledge graph is exposed via Model Context Protocol:
+Install any of these alongside Watson and they become available as investigation angles. The Bellingcat toolkit registry maps 338 tools to target types.
+
+## MCP Server — Community Knowledge Graph
 
 ```bash
-# Start MCP server
 uvicorn watson.mcp_server:mcp --port 8001
 ```
 
-**Available tools:**
+Exposes the investigation graph via Model Context Protocol:
+
 - `watson_search` — search entities, cases, relations
-- `watson_traverse` — explore connections from an entity
-- `watson_case` — retrieve a published case
+- `watson_traverse` — explore connections from any entity
+- `watson_case` — retrieve a published investigation
 - `watson_stats` — graph statistics
 - `watson_context` — check prior findings before investigating
+
+Every public case writes to this graph. Future investigations auto-surface connections.
 
 ## Project Structure
 
 ```
 watson-osint/
 ├── watson/
-│   ├── agents/          # Pluggable agent adapters
+│   ├── agents/          # Pluggable backends
 │   │   ├── base.py      # Abstract interface
-│   │   ├── hermes.py    # Hermes adapter
-│   │   └── direct.py    # Direct LLM adapter
-│   ├── engine.py        # Investigation engine
-│   ├── graph.py         # Knowledge graph
+│   │   ├── hermes.py    # Hermes (CLI subprocess)
+│   │   └── direct.py    # OpenAI-compatible + DuckDuckGo
+│   ├── engine.py        # Multi-angle investigation engine
+│   ├── graph.py         # Persistent knowledge graph
 │   ├── mcp_server.py    # Community MCP endpoint
-│   ├── cli.py           # Branded CLI
-│   └── web/             # FastAPI shell + chat UI
+│   ├── cli.py           # Terminal interface
+│   └── web/             # FastAPI + chat UI
 │       ├── app.py
 │       └── templates/
 ├── requirements.txt
 └── LICENSE
 ```
 
-## Roadmap
+## Configuration
 
-1. **Open-source foundation** (now) — self-hosted, public cases, community MCP
-2. **Journalist SaaS** — hosted, private cases, file upload
-3. **API tier** — usage-based for compliance platforms
-4. **Enterprise on-prem** — government, SSO, SLA
+```bash
+# Agent backend
+WATSON_AGENT=hermes|direct
+
+# Direct adapter (any OpenAI-compatible API)
+WATSON_API_KEY=sk-...
+WATSON_API_BASE=https://api.openai.com/v1
+WATSON_MODEL=gpt-4o
+
+# GitHub OAuth (optional — for web login)
+GITHUB_CLIENT_ID=...
+GITHUB_CLIENT_SECRET=...
+
+# MCP community graph
+MCP_PORT=8001
+```
 
 ## License
 

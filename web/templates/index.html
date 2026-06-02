@@ -1,0 +1,1834 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Watson OSINT — Investigation Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-root: #08080f;
+      --bg-sidebar: #0c0c18;
+      --bg-surface: #111122;
+      --bg-card: #1a1a2e;
+      --bg-card-hover: #1f1f36;
+      --bg-input: #0f0f1a;
+      --border: #252545;
+      --border-light: #1e1e38;
+      --text-primary: #e0e0f0;
+      --text-secondary: #8888aa;
+      --text-muted: #555577;
+      --accent: #e2a830;
+      --accent-dim: #b88a20;
+      --accent-glow: rgba(226, 168, 48, 0.15);
+      --critical: #e04747;
+      --high: #e0743a;
+      --medium: #d4a42e;
+      --low: #667788;
+      --info: #4488cc;
+      --success: #2ea85a;
+      --font-ui: 'Inter', system-ui, sans-serif;
+      --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+      --radius: 6px;
+      --radius-lg: 10px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      background: var(--bg-root);
+      color: var(--text-primary);
+      font-family: var(--font-ui);
+      font-size: 14px;
+      line-height: 1.5;
+      overflow: hidden;
+    }
+
+    /* ── Layout ─────────────────────────────── */
+    .app {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      height: 100vh;
+    }
+
+    /* ── Sidebar ────────────────────────────── */
+    .sidebar {
+      background: var(--bg-sidebar);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .sidebar-header {
+      padding: 20px 20px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .sidebar-header h1 {
+      font-family: var(--font-mono);
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--accent);
+      letter-spacing: -0.5px;
+    }
+    .sidebar-header .subtitle {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      margin-top: 2px;
+    }
+    .case-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+    }
+    .case-item {
+      padding: 12px 14px;
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: background 0.15s;
+      margin-bottom: 4px;
+      border: 1px solid transparent;
+    }
+    .case-item:hover { background: var(--bg-card-hover); }
+    .case-item.active {
+      background: var(--accent-glow);
+      border-color: var(--accent-dim);
+    }
+    .case-item .case-name {
+      font-weight: 600;
+      font-size: 13px;
+      color: var(--text-primary);
+    }
+    .case-item .case-meta {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 3px;
+    }
+    .case-item .case-status {
+      display: inline-block;
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      margin-top: 4px;
+    }
+    .case-status.open { background: rgba(226,168,48,0.15); color: var(--accent); }
+    .case-status.closed { background: rgba(102,119,136,0.15); color: var(--low); }
+    .sidebar-footer {
+      padding: 14px 20px;
+      border-top: 1px solid var(--border);
+    }
+    .btn-new-case {
+      width: 100%;
+      padding: 10px;
+      background: var(--accent);
+      color: #0a0a12;
+      border: none;
+      border-radius: var(--radius);
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-new-case:hover { background: #f0b840; }
+    .btn-settings {
+      width: 100%;
+      padding: 8px;
+      background: transparent;
+      color: var(--text-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      cursor: pointer;
+      margin-top: 8px;
+      transition: all 0.15s;
+    }
+    .btn-settings:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* ── Settings modal ─────────────────────── */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.7);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-overlay.active { display: flex; }
+    .modal {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 28px;
+      width: 480px;
+      max-width: 90vw;
+      max-height: 80vh;
+      overflow-y: auto;
+    }
+    .modal h3 {
+      font-family: var(--font-mono);
+      font-size: 16px;
+      margin-bottom: 20px;
+      color: var(--accent);
+    }
+    .form-group { margin-bottom: 16px; }
+    .form-group label {
+      display: block;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+    .form-group input, .form-group select {
+      width: 100%;
+      padding: 10px 12px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text-primary);
+      font-family: var(--font-mono);
+      font-size: 13px;
+      outline: none;
+    }
+    .form-group input:focus, .form-group select:focus { border-color: var(--accent); }
+    .form-group select { cursor: pointer; }
+    .provider-presets { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+    .provider-preset {
+      padding: 6px 12px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius);
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .provider-preset:hover { border-color: var(--border); }
+    .provider-preset.active { border-color: var(--accent); color: var(--accent); background: var(--accent-glow); }
+    .modal-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 20px;
+      justify-content: flex-end;
+    }
+    .btn-modal {
+      padding: 8px 20px;
+      border-radius: var(--radius);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+    }
+    .btn-save { background: var(--accent); color: #0a0a12; }
+    .btn-cancel { background: var(--bg-card); color: var(--text-secondary); border: 1px solid var(--border); }
+
+    /* ── Export buttons ─────────────────────── */
+    .topbar-actions { display: flex; gap: 8px; align-items: center; }
+    .btn-export {
+      padding: 6px 14px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn-export:hover { border-color: var(--accent); color: var(--accent); }
+    .btn-export-dropdown { position: relative; display: inline-block; }
+    .export-menu {
+      display: none;
+      position: absolute;
+      right: 0;
+      top: 100%;
+      margin-top: 4px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      z-index: 100;
+      min-width: 140px;
+      overflow: hidden;
+    }
+    .export-menu.active { display: block; }
+    .export-menu-item {
+      padding: 10px 16px;
+      cursor: pointer;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-secondary);
+      transition: background 0.1s;
+    }
+    .export-menu-item:hover { background: var(--bg-card); color: var(--text-primary); }
+
+    /* ── Conclusion ─────────────────────────── */
+    .conclusion-panel {
+      background: linear-gradient(135deg, rgba(226,168,48,0.06), rgba(226,168,48,0.02));
+      border: 1px solid var(--accent-dim);
+      border-radius: var(--radius-lg);
+      padding: 24px;
+      margin: 20px 0;
+    }
+    .conclusion-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    .conclusion-header h3 {
+      font-family: var(--font-mono);
+      font-size: 14px;
+      color: var(--accent);
+    }
+    .btn-generate {
+      padding: 8px 18px;
+      background: var(--accent);
+      color: #0a0a12;
+      border: none;
+      border-radius: var(--radius);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-generate:disabled { opacity: 0.5; cursor: not-allowed; }
+    .conclusion-content {
+      font-size: 13px;
+      line-height: 1.8;
+      color: var(--text-secondary);
+    }
+    .conclusion-content h2, .conclusion-content h3 { color: var(--text-primary); margin: 12px 0 6px; font-size: 14px; }
+    .conclusion-content strong { color: var(--text-primary); }
+    .conclusion-content ul { padding-left: 20px; margin: 8px 0; }
+    .conclusion-content li { margin: 4px 0; }
+    .conclusion-content p { margin: 8px 0; }
+
+    /* ── Link mode ──────────────────────────── */
+    .finding-card.linking { cursor: pointer; }
+    .finding-card.link-selected {
+      border-color: var(--accent) !important;
+      box-shadow: 0 0 0 2px var(--accent-glow);
+    }
+    .btn-link-mode {
+      padding: 6px 14px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.15s;
+      margin-right: 8px;
+    }
+    .btn-link-mode:hover { border-color: var(--accent); color: var(--accent); }
+    .btn-link-mode.active {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: var(--accent-glow);
+    }
+    .link-banner {
+      display: none;
+      padding: 10px 16px;
+      background: var(--accent-glow);
+      border: 1px solid var(--accent-dim);
+      border-radius: var(--radius);
+      margin-bottom: 12px;
+      font-size: 12px;
+      color: var(--accent);
+      font-family: var(--font-mono);
+    }
+    .link-banner.active { display: block; }
+    .manual-xref {
+      border-color: var(--accent-dim) !important;
+      border-style: dashed;
+    }
+    .manual-xref .xref-badge {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      background: rgba(226,168,48,0.2);
+      color: var(--accent);
+      padding: 2px 6px;
+      border-radius: 3px;
+    }
+
+    /* ── Main ───────────────────────────────── */
+    .main {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Top bar ────────────────────────────── */
+    .topbar {
+      padding: 16px 28px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      background: var(--bg-sidebar);
+    }
+    .topbar .case-title {
+      font-size: 18px;
+      font-weight: 700;
+      flex: 1;
+    }
+    .topbar .case-id {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-muted);
+      background: var(--bg-card);
+      padding: 4px 10px;
+      border-radius: var(--radius);
+    }
+
+    /* ── Content area ───────────────────────── */
+    .content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 28px;
+    }
+
+    /* ── Empty state ────────────────────────── */
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      text-align: center;
+      color: var(--text-muted);
+    }
+    .empty-state .icon {
+      font-size: 64px;
+      margin-bottom: 16px;
+      opacity: 0.4;
+    }
+    .empty-state h2 {
+      font-family: var(--font-mono);
+      font-size: 20px;
+      color: var(--text-secondary);
+      margin-bottom: 8px;
+    }
+    .empty-state p {
+      max-width: 400px;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    /* ── Query form ─────────────────────────── */
+    .query-form {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .query-input {
+      flex: 1;
+      padding: 12px 16px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text-primary);
+      font-family: var(--font-mono);
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .query-input:focus { border-color: var(--accent); }
+    .query-input::placeholder { color: var(--text-muted); }
+    .btn-investigate {
+      padding: 12px 24px;
+      background: var(--accent);
+      color: #0a0a12;
+      border: none;
+      border-radius: var(--radius);
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.15s;
+    }
+    .btn-investigate:hover { background: #f0b840; }
+    .btn-investigate:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    /* ── Tool grid ──────────────────────────── */
+    .section-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+    }
+    .tool-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 10px;
+      margin-bottom: 28px;
+    }
+    .tool-tile {
+      padding: 14px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: all 0.2s;
+      position: relative;
+      overflow: hidden;
+    }
+    .tool-tile:hover { border-color: var(--border); background: var(--bg-card-hover); }
+    .tool-tile.selected {
+      border-color: var(--accent);
+      background: var(--accent-glow);
+    }
+    .tool-tile.running {
+      border-color: var(--accent);
+      animation: pulse 1s ease-in-out infinite;
+    }
+    .tool-tile.complete {
+      border-color: var(--success);
+    }
+    .tool-tile.error {
+      border-color: var(--critical);
+    }
+    .tool-tile .tool-icon {
+      font-size: 20px;
+      margin-bottom: 6px;
+    }
+    .tool-tile .tool-name {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+    .tool-tile .tool-count {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+    .tool-tile .tool-status {
+      position: absolute;
+      top: 8px;
+      right: 10px;
+      font-size: 10px;
+    }
+
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 0 0 0 var(--accent-glow); }
+      50% { box-shadow: 0 0 0 4px var(--accent-glow); }
+    }
+
+    /* ── Progress bar ───────────────────────── */
+    .progress-bar {
+      height: 3px;
+      background: var(--border);
+      border-radius: 2px;
+      margin-bottom: 24px;
+      overflow: hidden;
+      display: none;
+    }
+    .progress-bar.active { display: block; }
+    .progress-fill {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 2px;
+      transition: width 0.3s ease;
+      width: 0%;
+    }
+
+    /* ── Findings ───────────────────────────── */
+    .findings-list { margin-top: 8px; }
+    .finding-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-lg);
+      padding: 16px 20px;
+      margin-bottom: 10px;
+      transition: border-color 0.15s;
+    }
+    .finding-card:hover { border-color: var(--border); }
+    .finding-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .finding-title {
+      font-weight: 600;
+      font-size: 14px;
+      flex: 1;
+    }
+    .badge {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 3px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .badge-critical { background: rgba(224,71,71,0.15); color: var(--critical); }
+    .badge-high { background: rgba(224,116,58,0.15); color: var(--high); }
+    .badge-medium { background: rgba(212,164,46,0.15); color: var(--medium); }
+    .badge-low { background: rgba(102,119,136,0.15); color: var(--low); }
+    .badge-info { background: rgba(68,136,204,0.15); color: var(--info); }
+    .badge-source {
+      background: var(--bg-root);
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      padding: 3px 8px;
+      border-radius: 3px;
+    }
+    .finding-desc {
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }
+    .finding-evidence {
+      margin-top: 8px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .evidence-link {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--accent);
+      background: var(--accent-glow);
+      padding: 4px 10px;
+      border-radius: 3px;
+      text-decoration: none;
+      transition: background 0.15s;
+    }
+    .evidence-link:hover { background: rgba(226,168,48,0.25); }
+
+    /* ── Summary panel ──────────────────────── */
+    .summary-panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 20px 24px;
+      margin-bottom: 20px;
+    }
+    .summary-stats {
+      display: flex;
+      gap: 24px;
+      flex-wrap: wrap;
+    }
+    .summary-stat {
+      text-align: center;
+    }
+    .summary-stat .value {
+      font-family: var(--font-mono);
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--accent);
+    }
+    .summary-stat .label {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .summary-text {
+      margin-top: 14px;
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.7;
+      white-space: pre-wrap;
+    }
+
+    /* ── Cross-references ───────────────────── */
+    .xref-card {
+      background: var(--bg-card);
+      border: 1px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 12px 16px;
+      margin-bottom: 8px;
+    }
+    .xref-card .xref-title {
+      font-weight: 600;
+      font-size: 13px;
+    }
+    .xref-card .xref-desc {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-top: 4px;
+    }
+
+    /* ── Report markdown ────────────────────── */
+    .report-md {
+      font-size: 13px;
+      line-height: 1.8;
+      color: var(--text-secondary);
+    }
+    .report-md h2 {
+      font-family: var(--font-mono);
+      font-size: 16px;
+      color: var(--accent);
+      margin: 16px 0 8px;
+    }
+    .report-md h3 {
+      font-size: 14px;
+      color: var(--text-primary);
+      margin: 12px 0 6px;
+    }
+    .report-md strong { color: var(--text-primary); }
+
+    /* ── Status indicator ───────────────────── */
+    .investigation-status {
+      display: none;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 16px;
+      background: var(--bg-card);
+      border: 1px solid var(--accent-dim);
+      border-radius: var(--radius);
+      margin-bottom: 16px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--accent);
+    }
+    .investigation-status.active { display: flex; }
+    .spinner {
+      width: 16px;
+      height: 16px;
+      border: 2px solid var(--border);
+      border-top: 2px solid var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Tool live log ──────────────────────── */
+    .tool-log {
+      margin-top: 12px;
+      max-height: 200px;
+      overflow-y: auto;
+      font-family: var(--font-mono);
+      font-size: 11px;
+    }
+    .tool-log .log-line {
+      padding: 3px 0;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border-light);
+    }
+    .tool-log .log-line .tool-name { color: var(--accent); }
+    .tool-log .log-line .count { color: var(--success); }
+
+    /* ── Scrollbar ──────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+    /* ── Responsive ─────────────────────────── */
+    @media (max-width: 768px) {
+      .app { grid-template-columns: 1fr; }
+      .sidebar { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <h1>WATSON</h1>
+        <div class="subtitle">OSINT Investigation</div>
+      </div>
+      <div class="case-list" id="caseList">
+        <!-- populated by JS -->
+      </div>
+      <div class="sidebar-footer">
+        <button class="btn-new-case" onclick="createCase()">+ New Case</button>
+        <button class="btn-settings" onclick="openSettings()">⚙ API Settings</button>
+      </div>
+    </aside>
+
+    <!-- SETTINGS MODAL -->
+    <div class="modal-overlay" id="settingsModal">
+      <div class="modal">
+        <h3>⚙ API Configuration</h3>
+        <div class="provider-presets" id="providerPresets">
+          <button class="provider-preset" onclick="setProvider('deepseek')">DeepSeek</button>
+          <button class="provider-preset" onclick="setProvider('openai')">OpenAI</button>
+          <button class="provider-preset" onclick="setProvider('anthropic')">Anthropic</button>
+          <button class="provider-preset" onclick="setProvider('custom')">Custom</button>
+        </div>
+        <div class="form-group">
+          <label>API Base URL</label>
+          <input type="text" id="apiBase" placeholder="https://api.deepseek.com/v1">
+        </div>
+        <div class="form-group">
+          <label>API Key</label>
+          <input type="password" id="apiKey" placeholder="sk-...">
+        </div>
+        <div class="form-group">
+          <label>Model</label>
+          <input type="text" id="apiModel" placeholder="deepseek-chat">
+        </div>
+        <div class="modal-actions">
+          <button class="btn-modal btn-cancel" onclick="closeSettings()">Cancel</button>
+          <button class="btn-modal btn-save" onclick="saveSettings()">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MAIN -->
+    <main class="main">
+      <div class="topbar">
+        <div class="case-title" id="caseTitle">No case selected</div>
+        <div class="topbar-actions">
+          <button class="btn-link-mode" id="btnLinkMode" onclick="toggleLinkMode()" title="Link findings" style="display:none">🔗 Link</button>
+          <div class="btn-export-dropdown" id="exportDropdown" style="display:none">
+            <button class="btn-export" onclick="toggleExportMenu()">⬇ Export ▾</button>
+            <div class="export-menu" id="exportMenu">
+              <div class="export-menu-item" onclick="doExport('md')" style="color:var(--accent);font-weight:600">📝 Intelligence Brief (.md)</div>
+              <div class="export-menu-item" onclick="doExport('json')" style="color:var(--accent);font-weight:600">📋 Intelligence Brief (.json)</div>
+              <div style="border-top:1px solid var(--border);margin:4px 0"></div>
+              <div class="export-menu-item" onclick="doExport('md', true)">📝 Raw Export (.md)</div>
+              <div class="export-menu-item" onclick="doExport('json', true)">📋 Raw Export (.json)</div>
+            </div>
+          </div>
+          <div class="case-id" id="caseId"></div>
+        </div>
+      </div>
+      <div class="content" id="mainContent">
+        <!-- Empty state -->
+        <div class="empty-state" id="emptyState">
+          <div class="icon">🕵️</div>
+          <h2>Open a case to begin</h2>
+          <p>Create a new investigation or select one from the sidebar. Watson will deploy all 10 OSINT tool modules in parallel.</p>
+        </div>
+
+        <!-- Active case content (hidden by default) -->
+        <div id="activeCase" style="display:none">
+          <!-- Query form -->
+          <div class="query-form">
+            <input type="text" class="query-input" id="queryInput"
+              placeholder="e.g. who owns suspicious-domain.com?  /  company name ltd  /  @username  /  person of interest"
+              onkeydown="if(event.key==='Enter') runInvestigation()">
+            <button class="btn-investigate" id="btnInvestigate" onclick="runInvestigation()">
+              Investigate
+            </button>
+            <button class="btn-bellingcat" id="btnBellingcat" onclick="runBellingcat()" style="margin-left:8px;background:var(--bg-card);border:1px solid var(--border);color:var(--accent);padding:0 16px;border-radius:var(--radius);cursor:pointer;font-family:var(--font-ui);font-size:13px;font-weight:600;white-space:nowrap">
+              🐱 Bellingcat
+            </button>
+          </div>
+
+          <!-- Bellingcat Panel -->
+          <div class="bellingcat-panel" id="bellingcatPanel" style="display:none;padding:16px;background:var(--bg-card);border-radius:var(--radius-lg);border:2px solid var(--accent-dim);margin-bottom:16px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+              <span style="font-family:var(--font-mono);color:var(--accent);font-weight:700;font-size:13px">🐱 Bellingcat OSINT Toolkit</span>
+              <button onclick="document.getElementById('bellingcatPanel').style.display='none'" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:18px">&times;</button>
+            </div>
+            <div id="bellingcatContent" style="font-size:12px;color:var(--text-secondary)">
+              <div style="display:flex;gap:24px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+                <span style="color:var(--text-muted)">Target Type:</span>
+                <span id="bcTargetType" style="font-weight:600;color:var(--accent)">—</span>
+                <span style="color:var(--text-muted)">Categories:</span>
+                <span id="bcCatCount" style="font-weight:600">—</span>
+                <span style="color:var(--text-muted)">Tools:</span>
+                <span id="bcToolCount" style="font-weight:600">—</span>
+                <span style="color:var(--text-muted)">Ready URLs:</span>
+                <span id="bcReadyCount" style="font-weight:600;color:var(--success)">—</span>
+              </div>
+              <div id="bellingcatTools" style="max-height:300px;overflow-y:auto;margin-top:8px;display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:6px"></div>
+            </div>
+          </div>
+
+          <!-- Tool grid -->
+          <div class="section-label">Tool Modules</div>
+          <div class="tool-grid" id="toolGrid">
+            <!-- populated by JS -->
+          </div>
+
+          <!-- Investigation status -->
+          <div class="investigation-status" id="investigationStatus">
+            <div class="spinner"></div>
+            <span id="statusText">Dispatching...</span>
+          </div>
+
+          <!-- Link mode banner -->
+          <div class="link-banner" id="linkBanner">
+            Click two findings to link them. <button class="btn-modal btn-cancel" onclick="cancelLinkMode()" style="margin-left:12px;padding:2px 10px;font-size:11px">Cancel</button>
+          </div>
+
+          <!-- Progress bar -->
+          <div class="progress-bar" id="progressBar">
+            <div class="progress-fill" id="progressFill"></div>
+          </div>
+
+          <!-- Findings -->
+          <div id="resultsArea"></div>
+
+          <!-- Conclusion (populated by JS) -->
+          <div id="conclusionArea"></div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    // ═══════════════════════════════════════════════════════════
+    // Constants
+    // ═══════════════════════════════════════════════════════════
+    const TOOL_ICONS = {
+      satellite: '🛰️', geolocation: '📍', image_video: '📸',
+      social_media: '👥', people: '🔍', websites: '🌐',
+      corporate: '🏢', conflict: '⚠️', scraper: '🕷️', captcha: '🤖',
+      'bellingcat-toolkit': '🐱'
+    };
+
+    const TOOL_LABELS = {
+      satellite: 'Satellite', geolocation: 'Geolocation', image_video: 'Image/Video',
+      social_media: 'Social Media', people: 'People Search', websites: 'Websites/Domains',
+      corporate: 'Corporate/Finance', conflict: 'Conflict Monitor', scraper: 'Scraper',
+      captcha: 'CAPTCHA Solver', 'bellingcat-toolkit': 'Bellingcat (338 tools)'
+    };
+
+    const SEVERITY_CLASS = {
+      critical: 'badge-critical', high: 'badge-high', medium: 'badge-medium',
+      low: 'badge-low', info: 'badge-info'
+    };
+
+    // ═══════════════════════════════════════════════════════════
+    // State
+    // ═══════════════════════════════════════════════════════════
+    let cases = [];
+    let activeCaseId = null;
+    let tools = [];  // loaded from API
+    let selectedTools = new Set();
+    let isInvestigating = false;
+    let toolStatuses = {};  // tool_name -> {status, findings}
+    let currentReport = null;  // full report for export/conclusion
+    let conclusionText = '';
+    let synthesisResult = null;  // LLM-synthesized narrative brief
+    let linkMode = false;
+    let linkFirst = null;  // first finding selected for linking
+    let manualLinks = [];  // manually created links
+
+    // ═══════════════════════════════════════════════════════════
+    // Init
+    // ═══════════════════════════════════════════════════════════
+    async function init() {
+      await loadTools();
+      loadCases();
+      renderCaseList();
+      if (cases.length > 0) {
+        selectCase(cases[0].id);
+      }
+    }
+
+    async function loadTools() {
+      try {
+        const res = await fetch('/api/tools');
+        const data = await res.json();
+        tools = data.categories || [];
+        renderToolGrid();
+      } catch (e) {
+        console.error('Failed to load tools:', e);
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // Bellingcat integration
+    // ═══════════════════════════════════════════════════════════
+    async function runBellingcat() {
+      const query = document.getElementById('queryInput').value.trim();
+      if (!query) {
+        document.getElementById('bellingcatContent').innerHTML = '<div style=\"padding:20px;color:var(--critical);text-align:center\">Enter a target first</div>';
+        document.getElementById('bellingcatPanel').style.display = 'block';
+        return;
+      }
+
+      const panel = document.getElementById('bellingcatPanel');
+      panel.style.display = 'block';
+      document.getElementById('bellingcatContent').innerHTML = '<div style=\"text-align:center;padding:20px;color:var(--text-muted)\">🐱 Classifying target...</div>';
+
+      try {
+        const res = await fetch('/api/bellingcat/classify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query })
+        });
+        const data = await res.json();
+
+        document.getElementById('bcTargetType').textContent = data.target_type;
+        document.getElementById('bcCatCount').textContent = data.category_count;
+        document.getElementById('bcToolCount').textContent = data.tool_count;
+        document.getElementById('bcReadyCount').textContent = data.ready_count;
+
+        // Render tools grid
+        const toolsGrid = document.getElementById('bellingcatTools');
+        const FREE_COLORS = { Free: 'var(--success)', 'Partially Free': 'var(--accent)', Paid: 'var(--text-muted)' };
+
+        toolsGrid.innerHTML = data.tools.map(t => `
+          <div style="padding:8px 10px;background:var(--bg-surface);border-radius:4px;border-left:2px solid ${t.is_free ? 'var(--success)' : 'var(--text-muted)'}">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span style="font-weight:600;font-size:12px;color:var(--text-primary)">${escHtml(t.name)}</span>
+              <span style="font-size:9px;color:${FREE_COLORS[t.cost] || 'var(--text-muted)'};white-space:nowrap">${t.cost}</span>
+            </div>
+            <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${escHtml(t.description.slice(0,80))}${t.description.length > 80 ? '...' : ''}</div>
+            ${t.ready_url ? `<a href=\"${escHtml(t.ready_url)}\" target=\"_blank\" rel=\"noopener\" style=\"display:inline-block;margin-top:4px;font-size:9px;color:var(--info);text-decoration:none\">↗ Open tool</a>` : ''}
+          </div>
+        `).join('');
+
+      } catch (err) {
+        document.getElementById('bellingcatContent').innerHTML = `<div style=\"color:var(--critical);text-align:center;padding:20px\">Error: ${escHtml(err.message)}</div>`;
+      }
+    }
+
+    async function runBellingcatDeep() {
+      const query = document.getElementById('queryInput').value.trim();
+      if (!query) return;
+      const panel = document.getElementById('bellingcatPanel');
+      panel.style.display = 'block';
+      document.getElementById('bellingcatContent').innerHTML = '<div style=\"text-align:center;padding:20px;color:var(--text-muted)\">🐱 Running Bellingcat investigation...<br><small>This may take 30-60s</small></div>';
+
+      try {
+        const res = await fetch('/api/bellingcat/investigate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query, client_id: crypto.randomUUID().slice(0,8) })
+        });
+        const { client_id } = await res.json();
+
+        const es = new EventSource('/api/stream/' + client_id);
+        let findings = [];
+
+        es.addEventListener('finding', e => {
+          const f = JSON.parse(e.data);
+          findings.push(f);
+        });
+
+        es.addEventListener('done', e => {
+          es.close();
+          document.getElementById('bcTargetType').textContent = findings.length + ' findings';
+
+          const toolsGrid = document.getElementById('bellingcatTools');
+          toolsGrid.innerHTML = findings.map(f => `
+            <div style="padding:8px 10px;background:var(--bg-surface);border-radius:4px;border-left:2px solid var(--info)">
+              <div style="font-weight:600;font-size:11px;color:var(--text-primary)">${escHtml(f.title)}</div>
+              <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${escHtml(f.description.slice(0,100))}${f.description.length > 100 ? '...' : ''}</div>
+              ${f.evidence && f.evidence.length ? f.evidence.map(url => `<a href=\"${escHtml(url)}\" target=\"_blank\" rel=\"noopener\" style=\"display:block;font-size:9px;color:var(--info);margin-top:2px\">↗ evidence</a>`).join('') : ''}
+            </div>
+          `).join('');
+
+          if (!findings.length) {
+            toolsGrid.innerHTML = '<div style="color:var(--text-muted);padding:10px">No findings returned</div>';
+          }
+        });
+
+      } catch (err) {
+        document.getElementById('bellingcatContent').innerHTML = `<div style=\"color:var(--critical);text-align:center;padding:20px\">Error: ${escHtml(err.message)}</div>`;
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // Case management
+    // ═══════════════════════════════════════════════════════════
+    function loadCases() {
+      try {
+        cases = JSON.parse(localStorage.getItem('watson-cases') || '[]');
+      } catch { cases = []; }
+    }
+
+    function saveCases() {
+      localStorage.setItem('watson-cases', JSON.stringify(cases));
+    }
+
+    function createCase() {
+      const name = prompt('Case name:', 'Untitled Investigation');
+      if (!name) return;
+      const c = {
+        id: crypto.randomUUID().slice(0, 8),
+        name: name,
+        query: '',
+        created_at: new Date().toISOString(),
+        status: 'open',
+        report: null
+      };
+      cases.unshift(c);
+      saveCases();
+      renderCaseList();
+      selectCase(c.id);
+    }
+
+    function selectCase(id) {
+      activeCaseId = id;
+      const c = cases.find(x => x.id === id);
+      if (!c) return;
+
+      // Sync with server
+      fetch('/api/cases', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(c)
+      }).catch(() => {});
+
+      document.getElementById('emptyState').style.display = 'none';
+      document.getElementById('activeCase').style.display = 'block';
+      document.getElementById('caseTitle').textContent = c.name;
+      document.getElementById('caseId').textContent = '#' + c.id;
+
+      if (c.query) {
+        document.getElementById('queryInput').value = c.query;
+      }
+
+      // Restore report if available
+      if (c.report) {
+        currentReport = c.report;
+        conclusionText = '';
+        manualLinks = [];
+        document.getElementById('conclusionArea').innerHTML = '';
+        renderReport(c.report);
+        renderConclusionPrompt();
+      } else {
+        currentReport = null;
+        document.getElementById('resultsArea').innerHTML = '';
+        document.getElementById('conclusionArea').innerHTML = '';
+        document.getElementById('exportDropdown').style.display = 'none';
+        document.getElementById('btnLinkMode').style.display = 'none';
+      }
+
+      renderCaseList();
+      renderToolGrid();
+    }
+
+    function deleteCase(id) {
+      if (!confirm('Delete this case?')) return;
+      cases = cases.filter(c => c.id !== id);
+      saveCases();
+      fetch('/api/cases/' + id, { method: 'DELETE' }).catch(() => {});
+      if (activeCaseId === id) {
+        activeCaseId = null;
+        document.getElementById('emptyState').style.display = 'flex';
+        document.getElementById('activeCase').style.display = 'none';
+        document.getElementById('caseTitle').textContent = 'No case selected';
+        document.getElementById('caseId').textContent = '';
+      }
+      renderCaseList();
+      if (cases.length > 0 && !activeCaseId) selectCase(cases[0].id);
+    }
+
+    function renderCaseList() {
+      const el = document.getElementById('caseList');
+      el.innerHTML = cases.map(c => `
+        <div class="case-item ${c.id === activeCaseId ? 'active' : ''}"
+             onclick="selectCase('${c.id}')"
+             oncontextmenu="event.preventDefault(); deleteCase('${c.id}')">
+          <div class="case-name">${escHtml(c.name)}</div>
+          <div class="case-meta">${timeAgo(c.created_at)}</div>
+          <span class="case-status ${c.status}">${c.status}</span>
+        </div>
+      `).join('') || '<div style="padding:20px;color:var(--text-muted);text-align:center;font-size:12px">No cases yet</div>';
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // Tool grid
+    // ═══════════════════════════════════════════════════════════
+    function renderToolGrid() {
+      const grid = document.getElementById('toolGrid');
+      if (!tools.length) {
+        grid.innerHTML = '<div style="color:var(--text-muted);font-size:12px">Loading tools...</div>';
+        return;
+      }
+
+      grid.innerHTML = tools.map(cat => {
+        return cat.tools.map(t => {
+          const sel = selectedTools.has(t.name) ? ' selected' : '';
+          const statusClass = toolStatuses[t.name]?.status === 'success' ? ' complete' :
+                              toolStatuses[t.name]?.status === 'error' ? ' error' : '';
+          const count = toolStatuses[t.name]?.finding_count;
+          return `
+            <div class="tool-tile${sel}${statusClass}"
+                 onclick="toggleTool('${t.name}')"
+                 id="tile-${t.name}">
+              <div class="tool-icon">${TOOL_ICONS[t.name] || '🔧'}</div>
+              <div class="tool-name">${TOOL_LABELS[t.name] || t.name}</div>
+              <div class="tool-count">${count != null ? count + ' findings' : cat.category}</div>
+            </div>
+          `;
+        }).join('');
+      }).join('');
+    }
+
+    function toggleTool(name) {
+      if (isInvestigating) return;
+      if (selectedTools.has(name)) {
+        selectedTools.delete(name);
+      } else {
+        selectedTools.add(name);
+      }
+      renderToolGrid();
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // Investigation
+    // ═══════════════════════════════════════════════════════════
+    async function runInvestigation() {
+      const query = document.getElementById('queryInput').value.trim();
+      if (!query) return;
+      if (isInvestigating) return;
+
+      isInvestigating = true;
+      toolStatuses = {};
+      document.getElementById('btnInvestigate').disabled = true;
+      document.getElementById('resultsArea').innerHTML = '';
+      document.getElementById('investigationStatus').classList.add('active');
+      document.getElementById('statusText').textContent = 'Dispatching...';
+      document.getElementById('progressBar').classList.add('active');
+      document.getElementById('progressFill').style.width = '0%';
+
+      // Save query to case
+      const c = cases.find(x => x.id === activeCaseId);
+      if (c) {
+        c.query = query;
+        saveCases();
+      }
+
+      // Build tool filter
+      const toolsFilter = selectedTools.size > 0
+        ? [...selectedTools].map(n => tools.find(cat => cat.tools.some(t => t.name === n))?.category).filter(Boolean)
+        : null;
+
+      renderToolGrid();
+
+      try {
+        // Start investigation
+        const res = await fetch('/api/investigate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query, tools: toolsFilter, case_id: activeCaseId })
+        });
+        const { client_id } = await res.json();
+
+        // Connect SSE
+        const es = new EventSource('/api/stream/' + client_id);
+        let totalTools = 0;
+        let completedTools = 0;
+        let findings = [];
+
+        es.addEventListener('progress', e => {
+          const data = JSON.parse(e.data);
+          document.getElementById('statusText').textContent = data.message;
+          if (data.tool_count) totalTools = data.tool_count;
+          if (data.tools) {
+            // Mark all tools for this run
+            data.tools.forEach(tn => {
+              if (!toolStatuses[tn]) toolStatuses[tn] = { status: 'pending', finding_count: 0 };
+            });
+          }
+        });
+
+        es.addEventListener('tool_start', e => {
+          const data = JSON.parse(e.data);
+          const tile = document.getElementById('tile-' + data.tool);
+          if (tile) tile.classList.add('running');
+          document.getElementById('statusText').textContent = `Running: ${TOOL_LABELS[data.tool] || data.tool}...`;
+        });
+
+        es.addEventListener('tool_complete', e => {
+          const data = JSON.parse(e.data);
+          toolStatuses[data.tool] = { status: 'success', finding_count: data.finding_count, findings: data.findings };
+          completedTools++;
+          if (totalTools > 0) {
+            document.getElementById('progressFill').style.width = (completedTools / totalTools * 100) + '%';
+          }
+          const tile = document.getElementById('tile-' + data.tool);
+          if (tile) {
+            tile.classList.remove('running');
+            tile.classList.add('complete');
+          }
+          findings = findings.concat(data.findings);
+          renderToolGrid();
+          appendFindings(data.findings, data.tool, data.category);
+        });
+
+        es.addEventListener('tool_error', e => {
+          const data = JSON.parse(e.data);
+          toolStatuses[data.tool] = { status: 'error', finding_count: 0 };
+          completedTools++;
+          const tile = document.getElementById('tile-' + data.tool);
+          if (tile) {
+            tile.classList.remove('running');
+            tile.classList.add('error');
+          }
+          renderToolGrid();
+        });
+
+        es.addEventListener('error', e => {
+          document.getElementById('statusText').textContent = 'Error: ' + (JSON.parse(e.data).message || 'Unknown');
+        });
+
+        es.addEventListener('done', e => {
+          const data = JSON.parse(e.data);
+          es.close();
+          isInvestigating = false;
+          document.getElementById('btnInvestigate').disabled = false;
+          document.getElementById('investigationStatus').classList.remove('active');
+          document.getElementById('progressBar').classList.remove('active');
+
+          if (data.result) {
+            renderReport(data.result);
+
+            // Save to case
+            const c = cases.find(x => x.id === activeCaseId);
+            if (c) {
+              c.report = data.result;
+              c.status = 'investigated';
+              saveCases();
+            }
+
+            document.getElementById('caseTitle').textContent =
+              (c ? c.name : 'Case') + ' — ' + data.result.findings + ' findings';
+          }
+        });
+
+      } catch (err) {
+        console.error(err);
+        isInvestigating = false;
+        document.getElementById('btnInvestigate').disabled = false;
+        document.getElementById('investigationStatus').classList.remove('active');
+        document.getElementById('progressBar').classList.remove('active');
+        document.getElementById('statusText').textContent = 'Connection error';
+      }
+    }
+
+    function appendFindings(findings, toolName, category) {
+      const area = document.getElementById('resultsArea');
+
+      // Add a section header if not already there
+      const sectionId = 'section-' + toolName;
+      let section = document.getElementById(sectionId);
+      if (!section) {
+        section = document.createElement('div');
+        section.id = sectionId;
+        section.innerHTML = `
+          <div class="section-label" style="margin-bottom:8px;margin-top:16px">
+            ${TOOL_ICONS[toolName] || ''} ${TOOL_LABELS[toolName] || toolName} (${category})
+          </div>
+        `;
+        area.appendChild(section);
+      }
+
+      findings.forEach(f => {
+        const card = document.createElement('div');
+        card.className = 'finding-card';
+        card.innerHTML = `
+          <div class="finding-header">
+            <span class="badge ${SEVERITY_CLASS[f.severity] || 'badge-info'}">${f.severity}</span>
+            <span class="badge badge-source">${toolName}</span>
+            <span class="finding-title">${escHtml(f.title)}</span>
+            <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted)">
+              ${Math.round(f.confidence * 100)}% conf
+            </span>
+          </div>
+          <div class="finding-desc">${escHtml(f.description)}</div>
+          ${f.evidence && f.evidence.length ? `
+            <div class="finding-evidence">
+              ${f.evidence.map(url => `<a href="${escHtml(url)}" target="_blank" class="evidence-link" rel="noopener">↗ ${escHtml(url.slice(0,60))}${url.length > 60 ? '...' : ''}</a>`).join('')}
+            </div>
+          ` : ''}
+        `;
+        section.appendChild(card);
+      });
+    }
+
+    function renderReport(report) {
+      const area = document.getElementById('resultsArea');
+      area.innerHTML = '';
+      currentReport = report;
+      conclusionText = '';
+      manualLinks = [];
+      document.getElementById('conclusionArea').innerHTML = '';
+
+      // Show export + link buttons
+      document.getElementById('exportDropdown').style.display = 'block';
+      document.getElementById('btnLinkMode').style.display = 'inline-block';
+
+      // Summary panel
+      area.innerHTML += `
+        <div class="summary-panel">
+          <div class="section-label">Investigation Report</div>
+          <div class="summary-stats">
+            <div class="summary-stat">
+              <div class="value">${report.findings}</div>
+              <div class="label">Findings</div>
+            </div>
+            <div class="summary-stat">
+              <div class="value">${report.sources}</div>
+              <div class="label">Sources</div>
+            </div>
+            ${Object.entries(report.by_severity || {}).map(([k,v]) => `
+              <div class="summary-stat">
+                <div class="value" style="color:var(--${k === 'critical' ? 'critical' : k === 'high' ? 'high' : k === 'medium' ? 'medium' : 'low'})">${v}</div>
+                <div class="label">${k}</div>
+              </div>
+            `).join('')}
+          </div>
+          ${report.summary ? `<div class="report-md">${markdownToHtml(report.summary)}</div>` : ''}
+        </div>
+      `;
+
+      // Findings
+      if (report.findings_list && report.findings_list.length) {
+        area.innerHTML += '<div class="section-label" style="margin-bottom:10px">All Findings <span style="font-weight:400;color:var(--text-muted)">(' + report.findings_list.length + ')</span></div>';
+        report.findings_list.forEach((f, i) => {
+          area.innerHTML += `
+            <div class="finding-card" data-finding-index="${i}" data-finding-id="${escHtml(f.id)}" onclick="onFindingClick(event, ${i})">
+              <div class="finding-header">
+                <span class="badge ${SEVERITY_CLASS[f.severity] || 'badge-info'}">${f.severity}</span>
+                <span class="badge badge-source">${f.tool}</span>
+                <span class="finding-title">${escHtml(f.title)}</span>
+                <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted)">
+                  ${Math.round(f.confidence * 100)}% conf
+                </span>
+              </div>
+              <div class="finding-desc">${escHtml(f.description)}</div>
+              ${f.evidence && f.evidence.length ? `
+                <div class="finding-evidence">
+                  ${f.evidence.map(url => `<a href="${escHtml(url)}" target="_blank" class="evidence-link" rel="noopener" onclick="event.stopPropagation()">↗ ${escHtml(url.slice(0,60))}${url.length > 60 ? '...' : ''}</a>`).join('')}
+                </div>
+              ` : ''}
+            </div>
+          `;
+        });
+      }
+
+      // Cross-references
+      if (report.cross_references && report.cross_references.length) {
+        area.innerHTML += '<div class="section-label" style="margin-top:20px;margin-bottom:10px">Cross-References</div>';
+        report.cross_references.forEach(cr => {
+          area.innerHTML += `
+            <div class="xref-card">
+              <div class="xref-title">🔗 ${escHtml(cr.title)}</div>
+              <div class="xref-desc">${escHtml(cr.description)}</div>
+            </div>
+          `;
+        });
+      }
+
+      // Manual links display area
+      area.innerHTML += '<div id="manualLinksArea"></div>';
+
+      // Show conclusion prompt
+      renderConclusionPrompt();
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // Helpers
+    // ═══════════════════════════════════════════════════════════
+    function escHtml(s) {
+      if (!s) return '';
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    function timeAgo(iso) {
+      const diff = Date.now() - new Date(iso).getTime();
+      const mins = Math.floor(diff / 60000);
+      if (mins < 1) return 'just now';
+      if (mins < 60) return mins + 'm ago';
+      const hours = Math.floor(mins / 60);
+      if (hours < 24) return hours + 'h ago';
+      return Math.floor(hours / 24) + 'd ago';
+    }
+
+    function markdownToHtml(md) {
+      if (!md) return '';
+      return md
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+        .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\n\n/g, '<br><br>')
+        .replace(/^- (.+)$/gm, '• $1');
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // Settings (API key configuration)
+    // ═══════════════════════════════════════════════════════════
+    const PROVIDER_PRESETS = {
+      deepseek: { base: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+      openai: { base: 'https://api.openai.com/v1', model: 'gpt-4o' },
+      anthropic: { base: 'https://api.anthropic.com/v1', model: 'claude-sonnet-4-20250514' },
+      custom: { base: '', model: '' }
+    };
+
+    function loadSettings() {
+      try {
+        return JSON.parse(localStorage.getItem('watson-settings') || '{}');
+      } catch { return {}; }
+    }
+
+    function saveSettingsToStore(s) {
+      localStorage.setItem('watson-settings', JSON.stringify(s));
+    }
+
+    function setProvider(name) {
+      const p = PROVIDER_PRESETS[name];
+      document.getElementById('apiBase').value = p.base;
+      document.getElementById('apiModel').value = p.model;
+      document.querySelectorAll('.provider-preset').forEach(b => b.classList.remove('active'));
+      document.querySelector(`.provider-preset[onclick="setProvider('${name}')"]`)?.classList.add('active');
+    }
+
+    function openSettings() {
+      const s = loadSettings();
+      document.getElementById('apiBase').value = s.apiBase || PROVIDER_PRESETS.deepseek.base;
+      document.getElementById('apiKey').value = s.apiKey || '';
+      document.getElementById('apiModel').value = s.model || PROVIDER_PRESETS.deepseek.model;
+      document.getElementById('settingsModal').classList.add('active');
+      setProvider('deepseek');
+    }
+
+    function closeSettings() {
+      document.getElementById('settingsModal').classList.remove('active');
+    }
+
+    function saveSettings() {
+      const s = {
+        apiBase: document.getElementById('apiBase').value.trim(),
+        apiKey: document.getElementById('apiKey').value.trim(),
+        model: document.getElementById('apiModel').value.trim(),
+      };
+      saveSettingsToStore(s);
+      closeSettings();
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // Conclusion generation
+    // ═══════════════════════════════════════════════════════════
+    async function generateConclusion() {
+      const s = loadSettings();
+      if (!s.apiKey) {
+        alert('Configure your API key in Settings (⚙) first.');
+        return;
+      }
+      if (!currentReport || !currentReport.findings_list) return;
+
+      const btn = document.getElementById('btnGenerateConclusion');
+      btn.disabled = true;
+      btn.textContent = 'Generating...';
+
+      // Show pending panel
+      document.getElementById('conclusionArea').innerHTML = `
+        <div class="conclusion-panel">
+          <div class="conclusion-header">
+            <h3>🧠 Executive Conclusion</h3>
+          </div>
+          <div class="conclusion-content" style="text-align:center;padding:20px;color:var(--text-muted)">
+            <div class="spinner" style="margin:0 auto 12px"></div>
+            Generating analysis via ${s.model}...
+          </div>
+        </div>
+      `;
+
+      try {
+        const res = await fetch('/api/conclude', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            findings: currentReport.findings_list,
+            query: currentReport.query,
+            api_key: s.apiKey,
+            api_base: s.apiBase,
+            model: s.model
+          })
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+
+        conclusionText = data.conclusion;
+        document.getElementById('conclusionArea').innerHTML = `
+          <div class="conclusion-panel">
+            <div class="conclusion-header">
+              <h3>🧠 Executive Conclusion</h3>
+              <span style="font-size:10px;color:var(--text-muted)">via ${data.model}</span>
+            </div>
+            <div class="conclusion-content">${markdownToHtml(data.conclusion)}</div>
+          </div>
+        `;
+      } catch (err) {
+        document.getElementById('conclusionArea').innerHTML = `
+          <div class="conclusion-panel">
+            <div class="conclusion-header"><h3>🧠 Executive Conclusion</h3></div>
+            <div class="conclusion-content" style="color:var(--critical)">Error: ${escHtml(err.message)}</div>
+          </div>
+        `;
+      }
+      btn.disabled = false;
+      btn.textContent = conclusionText ? 'Regenerate' : 'Generate Conclusion';
+    }
+
+    async function synthesizeBrief() {
+      const s = loadSettings();
+      if (!s.apiKey) {
+        alert('Configure your API key in Settings (⚙) first.');
+        return;
+      }
+      if (!currentReport || !currentReport.findings_list) return;
+
+      const btn = document.getElementById('btnSynthesize');
+      btn.disabled = true;
+      btn.textContent = 'Synthesizing...';
+      btn.style.opacity = '0.6';
+
+      try {
+        const res = await fetch('/api/synthesize', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            findings: currentReport.findings_list,
+            query: currentReport.query,
+            api_key: s.apiKey,
+            api_base: s.apiBase,
+            model: s.model
+          })
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+
+        synthesisResult = data;
+
+        // Show the synthesis in the conclusion area
+        document.getElementById('conclusionArea').innerHTML = `
+          <div class="conclusion-panel">
+            <div class="conclusion-header">
+              <h3>🧠 Intelligence Brief</h3>
+              <span style="font-size:10px;color:var(--text-muted)">Synthesized via ${s.model}</span>
+            </div>
+            <div class="conclusion-content">
+              <h3>📊 Executive Summary</h3>
+              <p>${markdownToHtml(data.summary || '')}</p>
+              <h3>📝 Investigative Narrative</h3>
+              <p>${markdownToHtml(data.narrative || '')}</p>
+              <h3>⚡ Recommended Actions</h3>
+              <ul>${(data.actions || []).map(a => `<li>${escHtml(a)}</li>`).join('')}</ul>
+            </div>
+          </div>
+        `;
+      } catch (err) {
+        synthesisResult = null;
+        document.getElementById('conclusionArea').innerHTML = `
+          <div class="conclusion-panel">
+            <div class="conclusion-header"><h3>🧠 Intelligence Brief</h3></div>
+            <div class="conclusion-content" style="color:var(--critical)">Synthesis failed: ${escHtml(err.message)}</div>
+          </div>
+        `;
+      }
+      btn.disabled = false;
+      btn.textContent = synthesisResult ? '📝 Resynthesize' : '📝 Synthesize Brief';
+      btn.style.opacity = '';
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // Export
+    // ═══════════════════════════════════════════════════════════
+    function toggleExportMenu() {
+      document.getElementById('exportMenu').classList.toggle('active');
+      // Close on outside click
+      setTimeout(() => {
+        document.addEventListener('click', function closeMenu(e) {
+          if (!e.target.closest('.btn-export-dropdown')) {
+            document.getElementById('exportMenu').classList.remove('active');
+            document.removeEventListener('click', closeMenu);
+          }
+        });
+      }, 10);
+    }
+
+    async function doExport(format, rawOnly = false) {
+      document.getElementById('exportMenu').classList.remove('active');
+      if (!currentReport) return;
+
+      const c = cases.find(x => x.id === activeCaseId);
+      const caseName = c ? c.name : 'investigation';
+
+      // Add manual links to report for export
+      const exportReport = JSON.parse(JSON.stringify(currentReport));
+      if (manualLinks.length) {
+        exportReport.cross_references = (exportReport.cross_references || []).concat(
+          manualLinks.map((link, i) => ({
+            id: `manual-${i}`,
+            title: `${link[0].title} ↔ ${link[1].title}`,
+            description: `Manual link: these findings are connected.`,
+            evidence: []
+          }))
+        );
+      }
+
+      // If not raw-only and we have a synthesis, include it
+      const body = {
+        report: exportReport,
+        case_name: caseName,
+        query: currentReport.query,
+        conclusion: conclusionText,
+      };
+      if (!rawOnly && synthesisResult) {
+        body.synthesis = synthesisResult;
+      }
+
+      const endpoint = format === 'md' ? '/api/export/md' : '/api/export/json';
+      try {
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const suffix = (!rawOnly && synthesisResult) ? '_brief' : '';
+        a.href = url;
+        a.download = `${caseName.replace(/\s/g,'_')}${suffix}.${format}`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        alert('Export failed: ' + err.message);
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // Finding linking
+    // ═══════════════════════════════════════════════════════════
+    function toggleLinkMode() {
+      linkMode = !linkMode;
+      linkFirst = null;
+      const btn = document.getElementById('btnLinkMode');
+      const banner = document.getElementById('linkBanner');
+
+      if (linkMode) {
+        btn.classList.add('active');
+        banner.classList.add('active');
+        document.querySelectorAll('.finding-card').forEach(c => c.classList.add('linking'));
+      } else {
+        btn.classList.remove('active');
+        banner.classList.remove('active');
+        document.querySelectorAll('.finding-card').forEach(c => {
+          c.classList.remove('linking', 'link-selected');
+        });
+      }
+    }
+
+    function cancelLinkMode() {
+      linkMode = false;
+      linkFirst = null;
+      document.getElementById('btnLinkMode').classList.remove('active');
+      document.getElementById('linkBanner').classList.remove('active');
+      document.querySelectorAll('.finding-card').forEach(c => {
+        c.classList.remove('linking', 'link-selected');
+      });
+    }
+
+    function onFindingClick(event, index) {
+      if (!linkMode) return;
+      if (!currentReport || !currentReport.findings_list) return;
+
+      const card = event.currentTarget;
+      const finding = currentReport.findings_list[index];
+      if (!finding) return;
+
+      if (!linkFirst) {
+        // First selection
+        linkFirst = { index, finding, card };
+        card.classList.add('link-selected');
+      } else if (linkFirst.index === index) {
+        // Deselect
+        linkFirst = null;
+        card.classList.remove('link-selected');
+      } else {
+        // Second selection — create link
+        createManualLink(linkFirst.finding, finding, linkFirst.card, card);
+        linkFirst.card.classList.remove('link-selected');
+        linkFirst = null;
+      }
+    }
+
+    function createManualLink(f1, f2, card1, card2) {
+      manualLinks.push([f1, f2]);
+
+      // Animate both cards
+      [card1, card2].forEach(c => {
+        c.style.transition = 'border-color 0.2s';
+        c.style.borderColor = 'var(--accent)';
+        setTimeout(() => { c.style.borderColor = ''; }, 1000);
+      });
+
+      // Show manual links
+      renderManualLinks();
+    }
+
+    function renderManualLinks() {
+      const area = document.getElementById('manualLinksArea');
+      if (!area) return;
+      if (!manualLinks.length) { area.innerHTML = ''; return; }
+
+      area.innerHTML = `
+        <div class="section-label" style="margin-top:20px;margin-bottom:10px">🔗 Manual Links (${manualLinks.length})</div>
+        ${manualLinks.map(([f1, f2], i) => `
+          <div class="xref-card manual-xref">
+            <span class="xref-badge">MANUAL</span>
+            <div class="xref-title">${escHtml(f1.title)} ↔ ${escHtml(f2.title)}</div>
+            <div class="xref-desc">
+              ${escHtml(f1.source)} (${Math.round(f1.confidence*100)}%) ↔ ${escHtml(f2.source)} (${Math.round(f2.confidence*100)}%)
+            </div>
+          </div>
+        `).join('')}
+      `;
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // Show conclusion panel after report renders
+    // ═══════════════════════════════════════════════════════════
+    function renderConclusionPrompt() {
+      const s = loadSettings();
+      const hasKey = !!s.apiKey;
+      document.getElementById('conclusionArea').innerHTML = `
+        <div class="conclusion-panel">
+          <div class="conclusion-header">
+            <h3>🧠 Intelligence Brief</h3>
+            <div style="display:flex;gap:8px">
+              <button class="btn-generate" id="btnGenerateConclusion" onclick="generateConclusion()"
+                ${!hasKey ? 'title="Configure API key in Settings first"' : ''}>
+                ${hasKey ? 'Analyse Findings' : '⚙ Configure API Key'}
+              </button>
+              <button class="btn-generate" id="btnSynthesize" onclick="synthesizeBrief()"
+                style="background:var(--bg-card);border:1px solid var(--accent);color:var(--accent)"
+                ${!hasKey ? 'title="Configure API key in Settings first"' : ''}>
+                📝 Synthesize Brief
+              </button>
+            </div>
+          </div>
+          <div class="conclusion-content" style="color:var(--text-muted);font-size:12px">
+            ${hasKey
+              ? '<b>Analyse Findings</b>: AI conclusion with risk assessment.<br><b>Synthesize Brief</b>: Full narrative report with actionable next steps — included in exports.'
+              : 'Configure your LLM API key in Settings (⚙) to enable AI-powered intelligence briefs.'}
+          </div>
+        </div>
+      `;
+    }
+
+    // Start
+    init();
+  </script>
+</body>
+</html>

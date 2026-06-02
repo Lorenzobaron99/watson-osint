@@ -318,10 +318,18 @@ class ScraperTool(OSINTTool):
             '', clean, flags=re.IGNORECASE
         ).strip()
 
-        # Find capitalized name sequence
-        match = re.search(r'\b([A-Z][a-z]+(?:\s+(?:"[^"]*"\s+)?[A-Z][a-z]+){1,4})\b', clean)
+        # Find capitalized name sequence (1-4 words)
+        match = re.search(r'\b([A-Z][a-z]+(?:\s+(?:"[^"]*"\s+)?[A-Z][a-z]+){0,3})\b', clean)
         if match:
             return match.group(1)
+
+        # Fallback: any CamelCase or single capitalized word (e.g. "OpenAI", "DeepSeek")
+        match = re.search(r'\b([A-Za-z][A-Za-z0-9]{2,}(?:\s+[A-Za-z][A-Za-z0-9]{1,}){0,2})\b', clean)
+        if match:
+            name = match.group(1)
+            if name.lower() not in ("who", "what", "where", "when", "why", "how",
+                "the", "and", "for", "with", "this", "that"):
+                return name
 
         return None
 

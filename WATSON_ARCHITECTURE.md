@@ -25,8 +25,8 @@ The most powerful OSINT investigator on the web. Not a chatbot that answers ques
 │                                                          │
 │  ┌──────────┐  ┌────────────┐  ┌─────────────────────┐  │
 │  │   CLI    │  │  Web Chat  │  │   MCP Server        │  │
-│  │ branded  │  │ htmx + SSE │  │ community knowledge │  │
-│  │ banner   │  │ branded UI │  │ graph endpoint      │  │
+│  │ terminal  │  │ htmx + SSE │  │ community knowledge │  │
+│  │ interface │  │ chat UI    │  │ graph endpoint      │  │
 │  └────┬─────┘  └─────┬──────┘  └──────────┬──────────┘  │
 │       │              │                     │             │
 │       └──────────────┼─────────────────────┘             │
@@ -56,19 +56,6 @@ The most powerful OSINT investigator on the web. Not a chatbot that answers ques
 │              │  case provenance │                         │
 │              └─────────────────┘                          │
 │                                                          │
-│  TIERS                                                    │
-│  ┌─────────────────┐  ┌──────────────────────────────┐  │
-│  │ FREE            │  │ PREMIUM ($50-200/mo)          │  │
-│  │ • Self-hosted   │  │ • Hosted SaaS                 │  │
-│  │ • Public cases  │  │ • Private cases               │  │
-│  │ • Community MCP │  │ • File upload (images/docs)   │  │
-│  │ • GitHub repo   │  │ • Priority support            │  │
-│  └─────────────────┘  └──────────────────────────────┘  │
-│                                                          │
-│  ROADMAP                                                 │
-│  • Journalist SaaS ($50-200/mo)                          │
-│  • API for compliance platforms (usage-based)            │
-│  • Enterprise on-prem (government)                       │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -268,7 +255,7 @@ watson-osint/
 │
 ├── watson/                     ← Watson product code
 │   ├── __init__.py
-│   ├── cli.py                  ← branded CLI + onboarding
+│   ├── cli.py                  ← terminal interface
 │   ├── engine.py               ← investigation engine
 │   ├── graph.py                ← knowledge graph engine
 │   ├── reporter.py             ← .md case generation
