@@ -127,14 +127,16 @@ export WATSON_MODEL=claude-sonnet-4    # or gpt-4o, deepseek-v3, gemini, command
 
 ### Agents (pluggable runtime backends)
 
-| Agent | Setup | Capabilities |
-|---|---|---|
-| **Direct** | API key only | DuckDuckGo search + any LLM. Zero dependencies. |
-| **Hermes** | Local install | Full toolset: web search, browser, vision, terminal, MCP tools |
-| **OpenClaw** | Local install | Full toolset via OpenClaw CLI |
-| **Custom** | Implement adapter | Add any agent runtime — the interface is 4 methods |
+Watson auto-discovers available agents — no hardcoded list. Add a new adapter to `watson/agents/` and it appears in onboarding.
 
-Set via `WATSON_AGENT` env var or during `watson onboard`. Adapters implement a simple protocol — adding a new agent backend is ~80 lines of code.
+| Agent | Setup | Capabilities |
+|---|---|---|---|
+| **Direct** ✅ | API key only | DuckDuckGo search + any LLM. Zero dependencies. |
+| **Hermes** ✅ | Local install | Full toolset: web search, browser, vision, terminal, MCP tools |
+| **OpenClaw** 🔜 | Coming | Full toolset via OpenClaw CLI |
+| **Custom** 🔜 | Implement adapter | Add any agent runtime — ~80 lines of code |
+
+Currently shipping: Direct (built-in) and Hermes. The adapter protocol is ready for OpenClaw and custom backends — they auto-appear in onboarding when added.
 
 ---
 
