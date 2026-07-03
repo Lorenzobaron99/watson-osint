@@ -3923,6 +3923,73 @@ and confidence assessments. Follow the OUTPUT FORMAT specified above."""
         if len(v) >= 3:
             return "organization"
         return "unknown"
+    
+    @staticmethod
+    def _extract_entities_from_text(text: str) -> list[dict]:
+        """Extract potential entity mentions from free text using regex patterns.
+        
+        Returns list of {value, type} dicts for domains, emails, wallets, IPs,
+        and capitalized multi-word phrases (likely person/org names).
+        """
+        entities: list[dict] = []
+        seen: set[str] = set()
+        
+        # Domains (e.g., stripe.com, opencorporates.com)
+        for m in re.finditer(r'\b([a-zA-Z0-9][-a-zA-Z0-9]*\.[a-zA-Z]{2,}(?:\.[a-zA-Z]{2,})?)\b', text):
+            domain = m.group(1).strip('.').lower()
+            if domain not in seen and '.' in domain and len(domain) > 5:
+                seen.add(domain)
+                entities.append({"value": domain, "type": "domain"})
+        
+        # Emails
+        for m in re.finditer(r'\b([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b', text):
+            email = m.group(1).lower()
+            if email not in seen:
+                seen.add(email)
+                entities.append({"value": email, "type": "email"})
+        
+        # Wallet addresses (Ethereum-style)
+        for m in re.finditer(r'\b(0x[a-fA-F0-9]{40})\b', text):
+            wallet = m.group(1)
+            if wallet not in seen:
+                seen.add(wallet)
+                entities.append({"value": wallet, "type": "wallet"})
+        
+        # IPs
+        for m in re.finditer(r'\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b', text):
+            ip = m.group(1)
+            if ip not in seen:
+                seen.add(ip)
+                entities.append({"value": ip, "type": "ip"})
+        
+        # Capitalized multi-word names (likely Person or Organization)
+        # Match: "Patrick Collison", "House Financial Services Committee", "Stripe"
+        for m in re.finditer(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,4})\b', text):
+            name = m.group(1).strip()
+            # Skip common words and noise
+            skip_words = {'The', 'This', 'That', 'Here', 'There', 'What', 'When', 'Where',
+                         'Which', 'Find', 'Help', 'Support', 'Source', 'Data', 'Search',
+                         'Case', 'Phase', 'Finding', 'Target', 'Report', 'Brief',
+                         'Summary', 'Key', 'Risk', 'Executive', 'Intelligence',
+                         'OpenSanctions', 'Sanctions', 'Programs', 'Country', 'Office',
+                         'Foreign', 'Assets', 'Control', 'List', 'Service', 'Supreme',
+                         'Leaders', 'Politically', 'Exposed', 'Persons', 'Datasets',
+                         'Changelog', 'Investigation', 'Committee', 'White', 'Stripes',
+                         'Seven', 'Nation', 'Army', 'Hacker', 'News', 'Help',
+                         'Myths', 'Fraud', 'Board', 'Dive', 'Payments', 'Approved',
+                         'Interview', 'Sources', 'Layer', 'Capital', 'Family',
+                         'Response', 'Financial', 'Services', 'Github', 'CEO',
+                         'Culture', 'Ben', 'Lang'}
+            if name in skip_words:
+                continue
+            if len(name) < 5:
+                continue
+            # Filter out things that look like section headers (all caps words followed by lowercase)
+            if name not in seen:
+                seen.add(name)
+                entities.append({"value": name, "type": ""})  # let classifier decide
+        
+        return entities
 
     def _update_graph(self, report: InvestigationReport):
         """Index case entities in knowledge graph with proper typing, relations, and MCP publish."""
@@ -3935,11 +4002,18 @@ and confidence assessments. Follow the OUTPUT FORMAT specified above."""
             ingested_entities: list[dict] = []
             
             for f in report.findings:
-                if not f.entities:
+                # Use structured entities if available, otherwise extract from text
+                raw_entities = f.entities if f.entities else []
+                if not raw_entities:
+                    # Fallback: extract entities from the finding title + description
+                    text = f"{f.title} {f.description}"
+                    raw_entities = self._extract_entities_from_text(text)
+                
+                if not raw_entities:
                     continue
                 
                 finding_entity_pairs: list[tuple[str, str, str]] = []  # (id, type, value)
-                for entity in f.entities:
+                for entity in raw_entities:
                     raw_type = entity.get("type", "")
                     raw_value = entity.get("value", entity.get("name", ""))
                     if not raw_value or not raw_value.strip():

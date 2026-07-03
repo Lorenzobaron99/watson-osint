@@ -525,6 +525,7 @@ def cmd_investigate(args):
             focus="",
             on_event=on_event,
             mode="deep_investigation",
+            save_mode="auto",
         )
         
         print(f"\n{G}═══ Investigation Complete ═══{X}")
