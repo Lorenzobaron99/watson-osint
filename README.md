@@ -2,7 +2,7 @@
 
 **Multi-source. Graph-native. Model-agnostic. Agent-agnostic.**
 
-Watson runs 7-phase OSINT investigations across 16 APIs, cross-references findings, and builds a persistent knowledge graph that grows smarter with every case. Inspired by investigative methodology, built for practitioners who want tools, not hype.
+Watson runs 7-phase OSINT investigations across 16 APIs, cross-references findings, and builds a persistent knowledge graph that grows smarter with every case. Methodology draws from Bazzell's identifier-pivoting and source-tiering principles — built for practitioners who want tools, not hype.
 
 [Architecture →](WATSON_ARCHITECTURE.md) · [Self-hosting MCP →](SELF_HOSTING.md) · [Landing page →](https://lorenzobaron99.github.io/watson)
 
