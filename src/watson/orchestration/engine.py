@@ -4039,22 +4039,28 @@ and confidence assessments. Follow the OUTPUT FORMAT specified above."""
                         "source": getattr(f, 'source_url', ''),
                     })
                 
-                # Create relations between co-occurring entities within the same finding
-                for i in range(len(finding_entity_pairs)):
-                    for j in range(i + 1, len(finding_entity_pairs)):
-                        _, src_type, src_val = finding_entity_pairs[i]
-                        _, tgt_type, tgt_val = finding_entity_pairs[j]
-                        g.add_relation(
-                            source_type=src_type, source_value=src_val,
-                            relation_type="co_occurs_with",
-                            target_type=tgt_type, target_value=tgt_val,
-                            case_id=report.case_id,
-                            source_url=getattr(f, 'source_url', ''),
-                            confidence=getattr(f, 'confidence', 0.5),
-                            evidence=f.title[:500] if hasattr(f, 'title') else "",
-                        )
-                
                 entity_ids.extend(eid for eid, _, _ in finding_entity_pairs)
+            
+            # Create relations between ALL entities in the report (not just per-finding)
+            # This captures cross-finding connections
+            all_pairs: list[tuple[str, str, str]] = []
+            for eid in entity_ids:
+                if eid in g._entities:
+                    ent = g._entities[eid]
+                    all_pairs.append((eid, ent.type, ent.value))
+            
+            for i in range(len(all_pairs)):
+                for j in range(i + 1, len(all_pairs)):
+                    _, src_type, src_val = all_pairs[i]
+                    _, tgt_type, tgt_val = all_pairs[j]
+                    g.add_relation(
+                        source_type=src_type, source_value=src_val,
+                        relation_type="co_occurs_with",
+                        target_type=tgt_type, target_value=tgt_val,
+                        case_id=report.case_id,
+                        confidence=0.4,
+                        evidence=f"Co-occur in investigation: {report.query}",
+                    )
             
             g.add_case(report.case_id, report.query)
             logger.info("graph_updated", extra={
