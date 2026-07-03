@@ -319,6 +319,7 @@ async def agent_investigate(req: InvestigateRequest):
                 focus=req.context,
                 on_event=push,
                 mode=req.mode,
+                save_mode="auto",  # Auto-save to disk — prevents 404 on save
             )
             
             # Send final report event with markdown
@@ -1027,38 +1028,87 @@ class SaveRequest(BaseModel):
 
 @app.post("/api/cases/{case_id}/save")
 async def save_case(case_id: str, req: SaveRequest = SaveRequest()):
-    """Save a pending investigation to disk + knowledge graph + optionally MCP."""
+    """Save a pending investigation to disk + knowledge graph + optionally MCP.
+
+    With auto-save, the case is already on disk. This endpoint handles:
+    - pending: save + graph + optional MCP publish
+    - already saved: just MCP publish if requested
+    """
     from src.watson.orchestration import get_engine
+    from pathlib import Path
     engine = get_engine()
     
-    if not hasattr(engine, '_pending_reports') or case_id not in engine._pending_reports:
-        raise HTTPException(404, f"No pending report for case {case_id}. It may already be saved.")
+    report = None
+    already_saved = False
     
-    report = engine._pending_reports[case_id]
+    if hasattr(engine, '_pending_reports') and case_id in engine._pending_reports:
+        report = engine._pending_reports[case_id]
+    else:
+        # Check if already saved to disk (auto-save mode)
+        case_path = Path.home() / "watson-cases" / f"{case_id}.md"
+        if case_path.exists():
+            already_saved = True
+        else:
+            raise HTTPException(404, 
+                f"Case {case_id} not found. It may not exist or the server was restarted. "
+                f"Run the investigation again.")
     
-    # Save to disk
-    engine._save_case(report)
-    
-    # Update knowledge graph
-    engine._update_graph(report)
-    
-    # Remove from pending
-    del engine._pending_reports[case_id]
+    if report is not None:
+        # Normal flow: save pending report
+        engine._save_case(report)
+        engine._update_graph(report)
+        del engine._pending_reports[case_id]
     
     # Publish to MCP only with explicit consent
     published = False
     publish_error = None
     if req.consent_publish:
-        ok, err = _publish_to_mcp(report)
+        if report:
+            ok, err = _publish_to_mcp(report)
+        elif already_saved:
+            # Reconstruct from disk for publishing
+            case_path = Path.home() / "watson-cases" / f"{case_id}.md"
+            text = case_path.read_text()
+            from src.watson.orchestration.engine import OrchestrationEngine
+            entities = OrchestrationEngine._extract_entities_from_text(text)
+            if entities:
+                import httpx
+                import re as _re
+                target = ""
+                tm = _re.search(r"\*\*Target:\*\*\s*(.+)", text)
+                if tm: target = tm.group(1).strip()
+                payload = {
+                    "case_id": case_id,
+                    "target": target,
+                    "target_type": "person",
+                    "findings_count": 0,
+                    "confirmed_count": 0,
+                    "verifiability": "",
+                    "date": "",
+                    "entities": [{
+                        "value": e["value"], "type": e["type"],
+                        "source": "", "tier": "PROBABLE", "case_id": case_id,
+                    } for e in entities],
+                }
+                resp = httpx.post(
+                    f"{MCP_SERVER_URL}/api/ingest", json=payload, timeout=10,
+                    headers={"X-API-Key": MCP_API_KEY} if MCP_API_KEY else {},
+                )
+                ok = resp.status_code == 200
+                err = None if ok else f"MCP server returned {resp.status_code}"
+            else:
+                ok, err = False, "No entities to publish"
+        else:
+            ok, err = False, "No report data available"
         published = ok
         publish_error = err
 
     return {
         "case_id": case_id,
-        "target": report.query,
-        "findings": len(report.findings),
-        "verifiability": f"{report.verifiability_score:.0%}",
-        "status": "saved",
+        "target": report.query if report else "saved case",
+        "findings": len(report.findings) if report else 0,
+        "verifiability": f"{report.verifiability_score:.0%}" if report else "",
+        "status": "saved" if not already_saved else "already_saved",
         "published": published,
         "publish_error": publish_error,
     }

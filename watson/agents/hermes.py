@@ -22,13 +22,13 @@ from .base import (
 HERMES_BIN = shutil.which("hermes") or "hermes"
 
 
-class HermesAdapter(AgentAdapter):
+class HermesCLIAdapter(AgentAdapter):
     """Adapter that delegates to Hermes CLI via subprocess.
 
     Uses `hermes chat -q` one-shot mode with --yolo for auto-approval.
     Each tool call spawns a short-lived Hermes process.
 
-    For production (v0.2+): use Hermes MCP server for persistent connections.
+    For production: use HermesMCPAdapter for MCP protocol transport.
     """
 
     name = "hermes"
@@ -84,7 +84,7 @@ class HermesAdapter(AgentAdapter):
             )
             output = stdout.decode("utf-8", errors="replace")
             # Extract the response between the box-drawing header and footer
-            return self._extract_response(output)
+            return _extract_response(output)
         except asyncio.TimeoutError:
             return ""
         except FileNotFoundError:
@@ -92,35 +92,37 @@ class HermesAdapter(AgentAdapter):
         except Exception:
             return ""
 
-    @staticmethod
-    def _extract_response(output: str) -> str:
-        """Extract the agent's actual response from Hermes chat output."""
-        import re
+def _extract_response(output: str) -> str:
+    """Extract the agent's actual response from Hermes chat output.
 
-        # Strip ANSI escape sequences (SGR, cursor movement, etc.)
-        ansi_escape = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\r')
-        clean = ansi_escape.sub('', output)
+    Shared between HermesCLIAdapter and HermesMCPAdapter.
+    """
+    import re
 
-        # Strip box-drawing and other Unicode control glyphs that survive
-        # terminal mangling
-        clean = re.sub(r'[\x80-\x9f]', '', clean)
+    # Strip ANSI escape sequences (SGR, cursor movement, etc.)
+    ansi_escape = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\r')
+    clean = ansi_escape.sub('', output)
 
-        lines = clean.split("\n")
-        response_lines = []
-        in_response = False
-        for line in lines:
-            stripped = line.strip()
-            # Match header: any line containing "Hermes" followed by dashes
-            if not in_response and "Hermes" in stripped:
-                in_response = True
-                continue
-            if in_response:
-                # Footer: line that is all dashes/spaces (end of box)
-                if stripped and re.match(r'^[\u2500\u2501\u2014\u2015\-\s]+$', stripped):
-                    break
-                if stripped:
-                    response_lines.append(stripped)
-        return "\n".join(response_lines)
+    # Strip box-drawing and other Unicode control glyphs that survive
+    # terminal mangling
+    clean = re.sub(r'[\x80-\x9f]', '', clean)
+
+    lines = clean.split("\n")
+    response_lines = []
+    in_response = False
+    for line in lines:
+        stripped = line.strip()
+        # Match header: any line containing "Hermes" followed by dashes
+        if not in_response and "Hermes" in stripped:
+            in_response = True
+            continue
+        if in_response:
+            # Footer: line that is all dashes/spaces (end of box)
+            if stripped and re.match(r'^[\u2500\u2501\u2014\u2015\-\s]+$', stripped):
+                break
+            if stripped:
+                response_lines.append(stripped)
+    return "\n".join(response_lines)
 
     async def search(self, query: str, num_results: int = 10) -> list[SearchResult]:
         """Web search via Hermes."""
@@ -195,7 +197,7 @@ class HermesAdapter(AgentAdapter):
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
             output = stdout.decode("utf-8", errors="replace")
-            description = self._extract_response(output)
+            description = _extract_response(output)
             return VisionResult(description=description)
         except Exception:
             return VisionResult(description="Vision analysis unavailable")

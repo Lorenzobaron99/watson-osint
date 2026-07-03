@@ -108,6 +108,9 @@ def _check_agent_available(name: str) -> bool:
     """Check if an agent backend is available on the system."""
     if name == "direct":
         return True  # Built-in, no external binary needed
+    # MCP adapter uses the same binary as CLI adapter
+    if name == "hermes-mcp":
+        return shutil.which("hermes") is not None
     return shutil.which(name) is not None
 
 
