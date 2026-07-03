@@ -5,11 +5,13 @@ __pycache__/
 dist/
 build/
 .eggs/
+*.so
 
 # Virtual environment
 .venv/
 venv/
 env/
+.env
 
 # IDE
 .vscode/
@@ -21,16 +23,27 @@ env/
 .DS_Store
 Thumbs.db
 
-# Watson runtime
+# Watson — runtime data (never commit)
 watson-cases/
 watson-graph/
 watson-graph-backups/
 .watson/
 
-# Environment / secrets
-.env
-*.pem
+# Watson — secrets
+.env.api_keys
+.env.*
 api_keys.json
+*.pem
+
+# Watson — databases
+*.db
+*.db-shm
+*.db-wal
+ledger.json
+
+# Watson — chat logs / context dumps
+CONTEXT_FROM_CHAT.md
+*.log
 
 # Node (frontend)
 node_modules/
@@ -44,6 +57,21 @@ htmlcov/
 # Mypy
 .mypy_cache/
 
-# Deployment
-*.log
-nohup.out
+# Hermes agent plans (local only)
+.hermes/
+
+# Skills (local only)
+skills/
+
+# Deprecated
+web/
+docker/
+docker-compose.yml
+run_server.sh
+run_web.sh
+scripts/
+cases/
+data/
+
+# Built frontend assets (build on install, not committed)
+watson/web/static/assets/

@@ -612,7 +612,7 @@ async def scheduler_list():
 @app.get("/api/bellingcat/summary")
 async def bellingcat_summary():
     try:
-        from watson.bellingcat_registry import BellingcatRegistry
+        from watson.toolkit_registry import BellingcatRegistry
         reg = BellingcatRegistry()
         return reg.summary()
     except Exception as e:

@@ -65,7 +65,7 @@ Watson is **agent agnostic**. The investigation methodology, knowledge graph, ca
 
 | Layer | Owned by | What it does |
 |---|---|---|
-| Methodology | **Watson** | Bellingcat-style multi-angle investigation |
+| Methodology | **Watson** | Multi-angle OSINT investigation methodology |
 | Dispatch | **Watson** | Parallel tool dispatch across source categories |
 | Knowledge Graph | **Watson** | Persistent entity-relationship graph with case provenance |
 | Case System | **Watson** | Structured .md reports with citations and confidence |
@@ -205,7 +205,7 @@ Free tier cases auto-publish. Premium cases are private. The community graph is 
 ║   ╚███╔███╔╝██║  ██║   ██║   ███████║╚██████╔╝██║ ╚████║ ║
 ║    ╚══╝╚══╝ ╚═╝  ╚═╝   ╚═╝   ╚══════╝ ╚═════╝ ╚═╝  ╚═══╝ ║
 ║                                                          ║
-║   The OSINT investigation engine. Bellingcat-inspired.    ║
+║   The OSINT investigation engine.                          ║
 ║   Graph-native. Community-powered.                        ║
 ║                                                          ║
 ╚══════════════════════════════════════════════════════════╝
@@ -269,7 +269,7 @@ watson-osint/
 │   │   └── direct.py           ← Direct LLM adapter
 │   │
 │   ├── data/                   ← reference data
-│   │   └── bellingcat_toolkit.csv
+│   │   └── toolkit.csv
 │   │
 │   └── web/                    ← FastAPI product shell
 │       ├── app.py

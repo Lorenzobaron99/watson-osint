@@ -23,7 +23,7 @@ except ImportError:
     _SSL_CTX = False
 
 from src.watson.core.models import Finding, FindingSeverity, FindingSource
-from .bellingcat_registry import BellingcatRegistry
+from .toolkit_registry import BellingcatRegistry
 from src.watson.tools.base import OSINTTool
 from src.watson.tools.registry import registry
 
@@ -78,7 +78,7 @@ class BellingcatToolkit(OSINTTool):
         try:
             self._registry.load()
         except FileNotFoundError:
-            return [self._make_finding(title="Bellingcat CSV Not Found", description="Run: curl -sL 'https://github.com/bellingcat/toolkit/releases/download/csv/all-tools.csv' -o data/bellingcat_toolkit.csv", severity=FindingSeverity.LOW)]
+            return [self._make_finding(title="Toolkit CSV Not Found", description="Run: curl -sL 'https://github.com/bellingcat/toolkit/releases/download/csv/all-tools.csv' -o data/toolkit.csv", severity=FindingSeverity.LOW)]
 
         _emit("classify", "start", detail="Analyzing target")
         target_type = self._classify_target(query, context)
@@ -212,7 +212,7 @@ class BellingcatToolkit(OSINTTool):
 
     async def _run_automation(self, query: str, target_type: str, tools: list) -> list[Finding]:
         try:
-            from watson.bellingcat_automation import BellingcatAutomation, TARGET_API_MAP
+            from watson.toolkit_automation import BellingcatAutomation, TARGET_API_MAP
         except ImportError as e:
             return [self._make_finding(title="Bellingcat unavailable", description=f"Automation module not found: {e}", confidence=0.0, severity=FindingSeverity.INFO, source_tool="bellingcat")]
         findings: list[Finding] = []

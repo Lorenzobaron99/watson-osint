@@ -1,5 +1,5 @@
 """
-Bellingcat Automation — bridge module for tools_bellingcat.py.
+Bellingcat Automation — bridge module for toolkit.py.
 
 Thin wrapper around bellingcat_api.BellingcatAPI that provides
 the interface expected by the BellingcatToolkit._run_automation() method.
@@ -10,7 +10,7 @@ Previously this module didn't exist, causing "No module named
 
 from __future__ import annotations
 
-from watson.bellingcat_api import BellingcatAPI, API_SELECTION, DIRECT_APIS
+from watson.toolkit_api import BellingcatAPI, API_SELECTION, DIRECT_APIS
 
 # ── Target-type → API tool mapping ─────────────────────────────
 
@@ -27,7 +27,7 @@ TARGET_API_MAP: dict[str, list[str]] = {
 class BellingcatAutomation:
     """Run automated Bellingcat API calls for a target type.
 
-    Wraps BellingcatAPI with the interface expected by tools_bellingcat.py:
+    Wraps BellingcatAPI with the interface expected by toolkit.py:
     - run_category(target_type, query, tool_names) → dict[str, list[dict]]
     - results_to_findings(tool_name, results, query, target_type) → list[dict]
     """
