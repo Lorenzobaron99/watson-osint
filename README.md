@@ -32,8 +32,8 @@ pip install -r requirements.txt
 # Terminal — onboarding wizard
 python -m watson.cli onboard
 
-# Web UI
-PYTHONPATH=.:src uvicorn watson.web.app:app --port 8777
+# Web UI (frontend included — no npm/build needed)
+python -m watson.cli web
 ```
 
 Zero-cost mode works immediately — no API keys required. Watson uses DuckDuckGo and 10+ free APIs out of the box.
