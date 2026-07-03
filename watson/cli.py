@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import importlib
 import json
 import os
 import random
@@ -103,6 +104,56 @@ def _save_config(config: dict):
 # ═══════════════════════════════════════════════════════════════════
 
 
+def _check_agent_available(name: str) -> bool:
+    """Check if an agent backend is available on the system."""
+    if name == "direct":
+        return True  # Built-in, no external binary needed
+    return shutil.which(name) is not None
+
+
+def _discover_agents() -> list[dict]:
+    """Auto-discover available agent adapters from watson/agents/."""
+    agents_dir = Path(__file__).resolve().parent / "agents"
+    discovered: list[dict] = []
+
+    # Always include Direct as built-in
+    discovered.append({
+        "name": "direct",
+        "description": "Any OpenAI-compatible API (OpenAI, Anthropic, DeepSeek, Groq)",
+        "available": True,
+    })
+
+    for f in sorted(agents_dir.glob("*.py")):
+        if f.name.startswith("_") or f.name == "base.py" or f.name == "direct.py":
+            continue
+        try:
+            spec = importlib.util.spec_from_file_location(
+                f"watson.agents.{f.stem}", str(f)
+            )
+            if spec and spec.loader:
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                for attr_name in dir(mod):
+                    attr = getattr(mod, attr_name)
+                    if (isinstance(attr, type) and
+                        hasattr(attr, "name") and
+                        attr_name.endswith("Adapter") and
+                        attr_name != "AgentAdapter"):
+                        agent_name = getattr(attr, "name", "")
+                        if not agent_name or agent_name == "base":
+                            continue
+                        discovered.append({
+                            "name": agent_name,
+                            "description": getattr(attr, "description", f"{agent_name.title()} agent"),
+                            "available": _check_agent_available(agent_name),
+                        })
+                        break
+        except Exception:
+            pass
+
+    return discovered
+
+
 def cmd_onboard():
     """First-time setup wizard — v1 'A Study in Scarlet'."""
     print(WATSON_BANNER)
@@ -125,32 +176,44 @@ def cmd_onboard():
 
     # ── Step 1: Engine ──
     print(f"{Y}═══ Step 1/4: Choose Your Engine{X}\n")
-    print(f"  [1] {B}Direct LLM{X} — any OpenAI-compatible API (OpenAI, Anthropic, DeepSeek, Groq)")
-    print(f"       {D}Set WATSON_API_KEY env var or enter below. Works with any provider.{X}")
-    print(f"       {G}Free tier works without API key — DuckDuckGo search only.{X}")
     
-    hermes_available = shutil.which("hermes") is not None
-    hermes_label = f"{G}detected{X}" if hermes_available else f"{Y}not installed{X}"
-    print(f"  [2] {B}Hermes Agent{X} — local, full toolset (web, browser, vision, terminal)")
-    print(f"       {D}Status: {hermes_label}{D}. Full toolset for autonomous investigations.{X}")
-    if not hermes_available:
-        print(f"       {Y}⚠ Hermes not found in PATH. Install it first or choose Direct LLM.{X}\n")
-    else:
+    agents = _discover_agents()
+    
+    for i, agent in enumerate(agents):
+        idx = i + 1
+        status = f"{G}available{X}" if agent["available"] else f"{Y}not detected{X}"
+        print(f"  [{idx}] {B}{agent['name'].title()}{X} — {agent['description']}")
+        print(f"       {D}Status: {status}{X}")
+        if not agent["available"]:
+            print(f"       {Y}⚠ Install {agent['name']} first, or choose a different engine.{X}")
         print()
     
-    # Default to Direct if Hermes not available
-    if hermes_available:
-        default_choice = "1" if config["agent"] == "direct" else "2"
+    # Default: match existing config, or first available agent
+    default_idx = 1
+    for i, agent in enumerate(agents):
+        if agent["available"] and agent["name"] == existing.get("agent", "direct"):
+            default_idx = i + 1
+            break
     else:
-        default_choice = "1"  # Force Direct if Hermes missing
+        for i, agent in enumerate(agents):
+            if agent["available"]:
+                default_idx = i + 1
+                break
     
-    choice = input(f"  {G}Choice [{default_choice}]:{X} ").strip() or default_choice
-    if choice == "2" and not hermes_available:
-        print(f"\n  {Y}⚠ Hermes is not installed. Falling back to Direct LLM.{X}")
-        print(f"  {D}Install Hermes: https://hermes-agent.nousresearch.com{X}\n")
-        config["agent"] = "direct"
-    else:
-        config["agent"] = "direct" if choice == "1" else "hermes"
+    choice = input(f"  {G}Choice [{default_idx}]:{X} ").strip() or str(default_idx)
+    try:
+        chosen_idx = int(choice) - 1
+        if 0 <= chosen_idx < len(agents):
+            chosen = agents[chosen_idx]
+            if not chosen["available"]:
+                print(f"\n  {Y}⚠ {chosen['name'].title()} is not installed. Using Direct.{X}\n")
+                config["agent"] = "direct"
+            else:
+                config["agent"] = chosen["name"]
+        else:
+            config["agent"] = agents[0]["name"]
+    except ValueError:
+        config["agent"] = agents[0]["name"]
 
     if config["agent"] == "direct":
         print()
