@@ -87,6 +87,8 @@ class HermesAdapter(AgentAdapter):
             return self._extract_response(output)
         except asyncio.TimeoutError:
             return ""
+        except FileNotFoundError:
+            return f"[Hermes not found. Install Hermes: https://hermes-agent.nousresearch.com]"
         except Exception:
             return ""
 

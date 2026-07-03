@@ -20,6 +20,7 @@ import asyncio
 import json
 import os
 import random
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -126,12 +127,30 @@ def cmd_onboard():
     print(f"{Y}═══ Step 1/4: Choose Your Engine{X}\n")
     print(f"  [1] {B}Direct LLM{X} — any OpenAI-compatible API (OpenAI, Anthropic, DeepSeek, Groq)")
     print(f"       {D}Set WATSON_API_KEY env var or enter below. Works with any provider.{X}")
-    print(f"  [2] {B}Hermes Agent{X} — local, full toolset (web, browser, vision, terminal)")
-    print(f"       {D}Requires Hermes running locally. Best for autonomous investigations.{X}\n")
+    print(f"       {G}Free tier works without API key — DuckDuckGo search only.{X}")
     
-    default_choice = "1" if config["agent"] == "direct" else "2"
+    hermes_available = shutil.which("hermes") is not None
+    hermes_label = f"{G}detected{X}" if hermes_available else f"{Y}not installed{X}"
+    print(f"  [2] {B}Hermes Agent{X} — local, full toolset (web, browser, vision, terminal)")
+    print(f"       {D}Status: {hermes_label}{D}. Full toolset for autonomous investigations.{X}")
+    if not hermes_available:
+        print(f"       {Y}⚠ Hermes not found in PATH. Install it first or choose Direct LLM.{X}\n")
+    else:
+        print()
+    
+    # Default to Direct if Hermes not available
+    if hermes_available:
+        default_choice = "1" if config["agent"] == "direct" else "2"
+    else:
+        default_choice = "1"  # Force Direct if Hermes missing
+    
     choice = input(f"  {G}Choice [{default_choice}]:{X} ").strip() or default_choice
-    config["agent"] = "direct" if choice == "1" else "hermes"
+    if choice == "2" and not hermes_available:
+        print(f"\n  {Y}⚠ Hermes is not installed. Falling back to Direct LLM.{X}")
+        print(f"  {D}Install Hermes: https://hermes-agent.nousresearch.com{X}\n")
+        config["agent"] = "direct"
+    else:
+        config["agent"] = "direct" if choice == "1" else "hermes"
 
     if config["agent"] == "direct":
         print()
