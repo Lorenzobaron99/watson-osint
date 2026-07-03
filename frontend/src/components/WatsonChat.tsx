@@ -18,7 +18,21 @@ const SHERLOCK_QUOTES = [
 
 const getWelcomeText = () => {
   const quote = SHERLOCK_QUOTES[Math.floor(Math.random() * SHERLOCK_QUOTES.length)];
-  return `Greetings, Detective. I am Watson — your autonomous OSINT investigation engine.\n\n${quote}\n\nEnter a target below: a person, company, domain, email, crypto wallet, or research topic. I will investigate autonomously across 7 phases — surface collection, identifier pivoting, deep investigation, dark web, cross-referencing, synthesis, and report.\n\nEvery finding carries a source URL and confidence score. I never fabricate data.`;
+  return `🕵️ Greetings, Detective. I am Watson — your autonomous OSINT investigation engine.
+
+${quote}
+
+**To begin, type a target below.** I investigate people, companies, domains, emails, crypto wallets, and more.
+
+**What happens next:**
+1. I run a 7-phase investigation pipeline — from surface collection to deep OSINT.
+2. Findings appear in real-time with source URLs and confidence scores.
+3. Results flow into your **Case Board**, **Evidence Map**, and **Personnel** tabs.
+4. You can connect two findings and I'll investigate their hidden relationship.
+
+**Every finding is evidence-backed.** I never fabricate data.
+
+Try one of the suggested targets below, or type your own.`;
 };
 
 interface Message {

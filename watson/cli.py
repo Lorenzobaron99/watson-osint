@@ -213,11 +213,21 @@ def cmd_onboard():
     paid_count = sum(1 for v in config.get("paid_api_keys", {}).values() if v)
     print(f"  Paid APIs:  {G if paid_count else D}{paid_count}/4 configured{X}")
     print(f"\n  {_quote()}")
-    py = sys.executable
-    print(f"  {D}Next: {B}{py} -m watson.cli web{D} to start the interface{X}")
-    print(f"  {D}   or: {B}{py} -m watson.cli doctor{D} to verify your setup{X}")
-    print(f"  {D}   or: {B}{py} -m watson.cli tools{D} to see available APIs{X}")
-    print(f"  {D}   or: {B}{py} -m watson.cli investigate \"Elon Musk\"{D} to run a case{X}\n")
+    print(f"\n  {G}Watson is ready.{X}")
+
+    # Offer to launch interface immediately
+    launch = input(f"\n  {Y}Launch the web interface now? [Y/n]:{X} ").strip().lower()
+    if launch in ("", "y", "yes"):
+        print(f"\n  {G}Starting Watson...{X}\n")
+        _launch_web("127.0.0.1", 8777)
+    else:
+        py = sys.executable
+        print(f"\n  {D}Start anytime with:{X}")
+        print(f"    {B}{py} -m watson.cli web{X}")
+        print(f"\n  {D}Other commands:{X}")
+        print(f"    {B}{py} -m watson.cli doctor{D}   — system health check{X}")
+        print(f"    {B}{py} -m watson.cli tools{D}    — list available APIs{X}")
+        print(f"    {B}{py} -m watson.cli chat{D}     — open the web interface{X}\n")
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -269,6 +279,60 @@ def cmd_config(args):
     print(f"\n  {D}Config file: {_config_path()}{X}")
 
 
+def _launch_web(host: str = "127.0.0.1", port: int = 8777) -> None:
+    """Start the web server in background and open browser when ready."""
+    import webbrowser
+    import time
+
+    project_root = Path(__file__).resolve().parent.parent
+    config = _load_config()
+    mcp_url = config.get("mcp_url", "http://localhost:8700")
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = f"src:{project_root}:{env.get('PYTHONPATH', '')}"
+    env["WATSON_MCP_URL"] = mcp_url
+    if config.get("mcp_api_key"):
+        env["MCP_API_KEY"] = config["mcp_api_key"]
+
+    print(f"  {D}Starting server on http://{host}:{port} ...{X}")
+
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "uvicorn", "watson.web.app:app",
+         "--host", host, "--port", str(port)],
+        cwd=str(project_root),
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    # Wait for server to be ready
+    import socket
+    for _ in range(15):
+        time.sleep(0.5)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1)
+        if sock.connect_ex((host, port)) == 0:
+            sock.close()
+            break
+        sock.close()
+    else:
+        print(f"  {Y}Server may still be starting — open http://{host}:{port}{X}")
+        return
+
+    print(f"  {G}Server ready. Opening browser...{X}")
+    time.sleep(0.5)
+    webbrowser.open(f"http://{host}:{port}")
+
+    # Keep running until Ctrl+C
+    try:
+        print(f"  {D}Press Ctrl+C to stop.{X}")
+        proc.wait()
+    except KeyboardInterrupt:
+        print(f"\n  {Y}Shutting down...{X}")
+        proc.terminate()
+        proc.wait()
+
+
 # ═══════════════════════════════════════════════════════════════════
 # WEB
 # ═══════════════════════════════════════════════════════════════════
@@ -280,39 +344,14 @@ def cmd_web(args):
         print(f"{Y}No config found — running onboarding first...{X}\n")
         cmd_onboard()
 
-    config = _load_config()
-    project_root = Path(__file__).resolve().parent.parent
     host = args.host or "0.0.0.0"
     port = args.port or 8777
 
     print(WATSON_BANNER)
     print(f"  {_quote()}")
     print(f"\n  {G}Starting Watson web interface...{X}")
-    print(f"  {D}http://{host}:{port}{X}")
-    
-    # Show graph status
-    mcp_url = config.get("mcp_url", "http://localhost:8700")
-    if "localhost" in mcp_url or "127.0.0.1" in mcp_url:
-        print(f"  {D}Graph: local (auto-started on port 8700){X}")
-    else:
-        print(f"  {D}Graph: {M}{mcp_url}{X}")
-    
-    print()
 
-    env = os.environ.copy()
-    env["PYTHONPATH"] = f"src:{project_root}:{env.get('PYTHONPATH', '')}"
-    env["WATSON_MCP_URL"] = mcp_url
-    if config.get("mcp_api_key"):
-        env["MCP_API_KEY"] = config["mcp_api_key"]
-
-    subprocess.run(
-        [
-            sys.executable, "-m", "uvicorn", "watson.web.app:app",
-            "--host", host, "--port", str(port),
-        ],
-        cwd=str(project_root),
-        env=env,
-    )
+    _launch_web("127.0.0.1", port)
 
 
 # ═══════════════════════════════════════════════════════════════════
