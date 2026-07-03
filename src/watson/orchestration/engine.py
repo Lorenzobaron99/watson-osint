@@ -1733,10 +1733,30 @@ class OrchestrationEngine:
             except Exception as e:
                 logger.warning("scraper_tool_failed: %s", e)
 
-        # Person targets: lightweight social discovery (all modes including Background Check)
-        # Quick DDG pass — "does this person have public social profiles?"
-        # Returns snippets only (no scraping), fits the 30-60s Background Check budget.
+        # Person targets: identity search (PeopleTool) + social discovery
+        # Run people-search FIRST — Google dorks, Wikidata, professional profiles.
+        # Then social discovery fills gaps with LinkedIn/Twitter/Instagram DDG.
         if profile.target_type == "person":
+            # ── Identity search (PeopleTool): Google dorks, Wikidata, GitHub, Twitter ──
+            sse.progress("surface", "→ Identity search: Google dorks, Wikidata, professional profiles…")
+            try:
+                from ..tools.people import PeopleTool
+                people = PeopleTool()
+                person_name = profile.primary_name or query
+                identity_findings = await people.investigate(person_name)
+                for rf in identity_findings:
+                    f = self._tool_finding_to_engine(rf, phase="surface")
+                    if f:
+                        tool_findings.append(f)
+                        sse.finding(f)
+                        sse.track_tool("people", person_name)
+                if identity_findings:
+                    sse.progress("surface",
+                        f"→ Found {len(identity_findings)} identity references for '{person_name}'")
+            except Exception as e:
+                logger.warning("people_tool_failed: %s", e)
+
+            # ── Social profile discovery (DDG): LinkedIn, Twitter, Instagram ──
             sse.progress("surface", "→ Social profile discovery…")
             try:
                 from ddgs import DDGS
