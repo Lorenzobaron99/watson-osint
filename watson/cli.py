@@ -2,12 +2,15 @@
 Watson CLI — terminal interface for the OSINT investigation engine.
 
 Commands:
-  watson onboard     First-time setup wizard
-  watson config      Show/edit configuration
-  watson web         Start the web UI (FastAPI + React)
-  watson investigate Run a single investigation
-  watson graph       Show knowledge graph stats
-  watson chat        Interactive terminal chat
+  watson setup        First-time setup wizard
+  watson onboard      Same as setup
+  watson doctor       System health check
+  watson tools        List available APIs
+  watson config       Show/edit configuration
+  watson web          Start the web interface
+  watson chat         Open browser to the web interface
+  watson investigate  Run a single investigation
+  watson graph        Show knowledge graph stats
 """
 
 from __future__ import annotations
@@ -20,6 +23,12 @@ import random
 import subprocess
 import sys
 from pathlib import Path
+
+# Ensure src/ is on path so `from src.watson...` imports work
+# without requiring PYTHONPATH=.:src in the shell.
+_src = Path(__file__).resolve().parent.parent / "src"
+if str(_src) not in sys.path:
+    sys.path.insert(0, str(_src))
 
 # ANSI colors
 W = "\033[38;5;208m"  # amber
@@ -204,9 +213,11 @@ def cmd_onboard():
     paid_count = sum(1 for v in config.get("paid_api_keys", {}).values() if v)
     print(f"  Paid APIs:  {G if paid_count else D}{paid_count}/4 configured{X}")
     print(f"\n  {_quote()}")
-    print(f"  {D}Next: {B}watson web{D} to start the interface{X}")
-    print(f"  {D}   or: {B}watson investigate \"Elon Musk\"{D} to run a case{X}")
-    print(f"  {D}   or: {B}watson graph{D} to explore the knowledge graph{X}\n")
+    py = sys.executable
+    print(f"  {D}Next: {B}{py} -m watson.cli web{D} to start the interface{X}")
+    print(f"  {D}   or: {B}{py} -m watson.cli doctor{D} to verify your setup{X}")
+    print(f"  {D}   or: {B}{py} -m watson.cli tools{D} to see available APIs{X}")
+    print(f"  {D}   or: {B}{py} -m watson.cli investigate \"Elon Musk\"{D} to run a case{X}\n")
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -406,18 +417,213 @@ def cmd_investigate(args):
 
 
 # ═══════════════════════════════════════════════════════════════════
+# SETUP
+# ═══════════════════════════════════════════════════════════════════
+
+
+def cmd_setup(args):
+    """First-time setup wizard — alias for onboard."""
+    cmd_onboard()
+
+
+# ═══════════════════════════════════════════════════════════════════
 # CHAT
 # ═══════════════════════════════════════════════════════════════════
 
 
 def cmd_chat(args):
-    """Interactive terminal chat."""
+    """Open the web interface — starts server if needed, opens browser."""
+    import webbrowser
+
+    print(WATSON_BANNER)
+    print(f"  {_quote()}\n")
+
+    host = args.host or "127.0.0.1"
+    port = args.port or 8777
+
+    # Check if server already running
+    import socket
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(1)
+    server_running = sock.connect_ex(("127.0.0.1", port)) == 0
+    sock.close()
+
+    if server_running:
+        url = f"http://{host}:{port}"
+        print(f"  {G}Watson is already running at {C}{url}{X}")
+        print(f"  Opening in your browser now...\n")
+        webbrowser.open(url)
+    else:
+        print(f"  {Y}No server detected on port {port}. Starting one now...{X}\n")
+        # Start in background and open browser
+        subprocess.Popen(
+            [sys.executable, "-m", "watson.cli", "web", "--host", host, "--port", str(port)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        import time
+        time.sleep(2)
+        url = f"http://{host}:{port}"
+        print(f"  {G}Opening {C}{url}{X} in your browser...\n")
+        webbrowser.open(url)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# DOCTOR
+# ═══════════════════════════════════════════════════════════════════
+
+
+def cmd_doctor(args):
+    """System health check — deps, config, APIs, graph, frontend."""
     print(WATSON_BANNER)
     print(f"  {_quote()}")
-    print(f"\n{G}Terminal chat is available via the web interface.{X}")
-    print(f"  {D}Run {B}watson web{D} and open {C}http://localhost:8777{X}")
-    print(f"  {D}Or use {B}watson investigate \"<target>\"{D} for single investigations.{X}")
-    print(f"  {D}Or {B}watson graph{D} to explore the knowledge graph.{X}")
+    print(f"\n{G}═══ Watson System Health Check ═══{X}\n")
+
+    all_ok = True
+
+    # ── Python ──
+    py_ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    py_ok = sys.version_info >= (3, 10)
+    icon = f"{G}✓{X}" if py_ok else f"{R}✗{X}"
+    print(f"  {icon} Python {py_ver}")
+    if not py_ok:
+        all_ok = False
+
+    # ── Dependencies ──
+    deps = ["fastapi", "uvicorn", "aiohttp", "httpx", "pydantic", "PIL", "jinja2"]
+    for dep in deps:
+        try:
+            __import__(dep if dep != "PIL" else "PIL")
+            print(f"  {G}✓{X} {dep}")
+        except ImportError:
+            print(f"  {R}✗{X} {dep} {D}(run: pip install -r requirements.txt){X}")
+            all_ok = False
+
+    # ── Config ──
+    config = _load_config()
+    if config:
+        paid = sum(1 for v in config.get("paid_api_keys", {}).values() if v)
+        print(f"  {G}✓{X} Config found — engine: {config.get('agent','?')}, {paid}/4 paid APIs")
+    else:
+        print(f"  {Y}○{X} No config — run {B}{sys.executable} -m watson.cli onboard{X}")
+        all_ok = False
+
+    # ── API connectivity ──
+    if config:
+        paid_keys = config.get("paid_api_keys", {})
+        apis = {
+            "OpenSanctions": paid_keys.get("opensanctions"),
+            "VirusTotal": paid_keys.get("virustotal"),
+            "OpenCorporates": paid_keys.get("opencorporates"),
+            "HIBP": paid_keys.get("hibp"),
+        }
+        for name, key in apis.items():
+            if key:
+                print(f"  {G}✓{X} {name} key configured")
+            else:
+                print(f"  {D}○{X} {name} {D}(no key — free tier only){X}")
+
+    # ── Graph server ──
+    mcp_url = config.get("mcp_url", "http://localhost:8700") if config else "http://localhost:8700"
+    try:
+        import httpx
+        r = httpx.get(f"{mcp_url}/api/stats", timeout=3)
+        if r.status_code == 200:
+            stats = r.json()
+            print(f"  {G}✓{X} Graph server — {stats.get('entity_count', 0)} entities, {stats.get('case_count', 0)} cases")
+        else:
+            print(f"  {Y}○{X} Graph server returned {r.status_code}")
+    except Exception:
+        print(f"  {Y}○{X} Graph server not reachable at {mcp_url}")
+        print(f"     {D}Start with: {sys.executable} -m watson.cli web{D} (auto-starts local graph){X}")
+
+    # ── Frontend ──
+    static_dir = Path(__file__).resolve().parent / "web" / "static"
+    index_html = static_dir / "index.html"
+    assets_dir = static_dir / "assets"
+    if index_html.exists() and assets_dir.exists() and list(assets_dir.glob("*.js")):
+        print(f"  {G}✓{X} Frontend built ({len(list(assets_dir.glob('*')))} files)")
+    else:
+        print(f"  {Y}○{X} Frontend not built — {D}run: cd frontend && npm run build{X}")
+        all_ok = False
+
+    # ── Bellingcat toolkit ──
+    csv_path = Path(__file__).resolve().parent.parent / "data" / "bellingcat_toolkit.csv"
+    if csv_path.exists():
+        print(f"  {G}✓{X} Bellingcat toolkit loaded")
+    else:
+        print(f"  {D}○{X} Bellingcat CSV not found (toolkit search disabled){X}")
+
+    # ── Tools count ──
+    try:
+        from .toolkit import DIRECT_APIS
+        free_count = sum(1 for v in DIRECT_APIS.values() if not v.get("requires_key"))
+        paid_count = sum(1 for v in DIRECT_APIS.values() if v.get("requires_key"))
+        print(f"  {G}✓{X} {len(DIRECT_APIS)} direct APIs ({free_count} free, {paid_count} paid)")
+    except Exception:
+        pass
+
+    print()
+    if all_ok:
+        print(f"  {G}All checks passed. Watson is ready.{X}")
+        print(f"  {D}Run {B}{sys.executable} -m watson.cli web{D} to start.{X}")
+    else:
+        print(f"  {Y}Some checks need attention. Run {B}{sys.executable} -m watson.cli onboard{D} to fix.{X}")
+    print()
+
+
+# ═══════════════════════════════════════════════════════════════════
+# TOOLS
+# ═══════════════════════════════════════════════════════════════════
+
+
+def cmd_tools(args):
+    """List available OSINT APIs and tools with configuration status."""
+    config = _load_config()
+    paid_keys = config.get("paid_api_keys", {}) if config else {}
+
+    print(WATSON_BANNER)
+    print(f"  {_quote()}")
+    print(f"\n{G}═══ Available OSINT APIs ═══{X}\n")
+
+    try:
+        from .toolkit import DIRECT_APIS
+        print(f"  {B}── Direct API Integrations ({len(DIRECT_APIS)}) ──{X}\n")
+        for name, cfg in sorted(DIRECT_APIS.items()):
+            needs_key = cfg.get("requires_key", False)
+            if needs_key:
+                slug = name.lower().replace(" ", "").replace(".", "")
+                # map to config slugs
+                key_map = {
+                    "opensanctions": "opensanctions",
+                    "opencorporates": "opencorporates",
+                    "virustotal": "virustotal",
+                    "hibp": "hibp",
+                }
+                configured = bool(paid_keys.get(key_map.get(slug, slug)))
+                status = f"{G}key set{X}" if configured else f"{Y}key needed{X}"
+                cost = "Paid"
+            else:
+                status = f"{G}free — no key needed{X}"
+                cost = "Free"
+            print(f"  {B}{name}{X}")
+            print(f"     {D}Cost: {cost}  |  Status: {status}{X}")
+    except Exception as e:
+        print(f"  {R}Could not load API registry: {e}{X}\n")
+
+    # Bellingcat toolkit stats
+    try:
+        from .toolkit_registry import registry
+        summary = registry.summary()
+        print(f"\n  {B}── Bellingcat OSINT Toolkit ──{X}")
+        print(f"  {D}{summary['total_tools']} tools across {len(summary['categories'])} categories{X}")
+        print(f"  {D}{summary['free_tools']} free · {summary['paid_tools']} paid · {summary['partial_tools']} partially free{X}")
+        print(f"  {D}{summary['url_templates']} tools have URL templates for direct querying{X}")
+        print(f"\n  {D}Target types supported: {', '.join(summary['target_types'])}{X}")
+    except Exception:
+        print(f"\n  {D}Bellingcat toolkit not loaded (CSV not found){X}")
+
+    print(f"\n  {D}Configure API keys with: {B}{sys.executable} -m watson.cli onboard{X}")
+    print(f"  {D}Run doctor to verify: {B}{sys.executable} -m watson.cli doctor{X}\n")
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -434,6 +640,8 @@ def main_entry():
 
     # onboard
     sub.add_parser("onboard", help="First-time setup wizard")
+    # setup (alias)
+    sub.add_parser("setup", help="First-time setup wizard (alias for onboard)")
 
     # config
     p_config = sub.add_parser("config", help="Show or update configuration")
@@ -453,11 +661,19 @@ def main_entry():
     p_graph = sub.add_parser("graph", help="Show knowledge graph stats and entities")
 
     # chat
-    sub.add_parser("chat", help="Interactive terminal chat")
+    p_chat = sub.add_parser("chat", help="Open the web interface (starts server if needed)")
+    p_chat.add_argument("--host", help="Server host (default: 127.0.0.1)")
+    p_chat.add_argument("--port", type=int, help="Port (default: 8777)")
+
+    # doctor
+    sub.add_parser("doctor", help="Run system health check — deps, config, APIs, graph")
+
+    # tools
+    sub.add_parser("tools", help="List available OSINT APIs and their status")
 
     args = parser.parse_args()
 
-    if args.command == "onboard":
+    if args.command in ("onboard", "setup"):
         cmd_onboard()
     elif args.command == "config":
         cmd_config(args)
@@ -469,9 +685,15 @@ def main_entry():
         cmd_graph(args)
     elif args.command == "chat":
         cmd_chat(args)
+    elif args.command == "doctor":
+        cmd_doctor(args)
+    elif args.command == "tools":
+        cmd_tools(args)
     else:
         print(WATSON_BANNER)
         print(f"  {_quote()}\n")
+        print(f"  {G}First time? Run {B}{sys.executable} -m watson.cli setup{X}")
+        print(f"  {D}Already set up? Run {B}{sys.executable} -m watson.cli chat{D} to open the interface{X}\n")
         parser.print_help()
 
 
