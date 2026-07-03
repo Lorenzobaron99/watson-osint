@@ -73,7 +73,24 @@ export default function WatsonChat({
   const [publishToGraph, setPublishToGraph] = useState<boolean>(() =>
     localStorage.getItem("WATSON_PUBLISH_GRAPH") === "true"
   );
+  const [graphStatus, setGraphStatus] = useState<{
+    connected: boolean; configured: boolean; reason: string;
+  }>({ connected: false, configured: false, reason: "Checking..." });
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Check graph connection on mount
+  useEffect(() => {
+    fetch("/api/graph/status")
+      .then(r => r.json())
+      .then(d => setGraphStatus({
+        connected: d.connected ?? d.configured ?? false,
+        configured: d.configured ?? false,
+        reason: d.reason || "",
+      }))
+      .catch(() => setGraphStatus({
+        connected: false, configured: false, reason: "Cannot reach API",
+      }));
+  }, []);
 
   useEffect(() => {
     const savedChat = localStorage.getItem("WATSON_CHAT_HISTORY");
@@ -295,6 +312,34 @@ export default function WatsonChat({
           try {
             const d = JSON.parse(ev.data);
             markdown = d.markdown || "";
+            // Update graph status after publish attempt
+            if (d.published_to_graph !== undefined) {
+              setGraphStatus(prev => ({
+                ...prev,
+                reason: d.published_to_graph ? "Publishing..." : "",
+              }));
+            }
+          } catch {}
+        });
+
+        es.addEventListener("graph_published", (ev: MessageEvent) => {
+          try {
+            const d = JSON.parse(ev.data);
+            setGraphStatus(prev => ({
+              ...prev, connected: true, configured: true,
+              reason: `✓ Published to graph`,
+            }));
+            setProgressLog(prev => [...prev, `✓ Published to community graph — ${d.case_id}`]);
+          } catch {}
+        });
+
+        es.addEventListener("graph_error", (ev: MessageEvent) => {
+          try {
+            const d = JSON.parse(ev.data);
+            setGraphStatus(prev => ({
+              ...prev, reason: `✗ ${d.message}`,
+            }));
+            setProgressLog(prev => [...prev, `✗ Graph publish failed: ${d.message}`]);
           } catch {}
         });
 
@@ -432,6 +477,16 @@ export default function WatsonChat({
           />
           Publish to community graph
         </label>
+        <span className={`inline-block w-2 h-2 rounded-full ${
+          graphStatus.connected ? "bg-green-500" :
+          graphStatus.configured ? "bg-yellow-500" :
+          "bg-red-500/50"
+        }`} title={graphStatus.reason} />
+        <span className="text-[9px] text-on-surface-variant/60 hidden sm:inline">
+          {graphStatus.connected ? "connected" :
+           graphStatus.configured ? "local" :
+           "not configured"}
+        </span>
       </div>
 
       <div className="flex-1 flex flex-col border border-outline-variant rounded bg-surface-container/40 overflow-hidden shadow-2xl h-[55vh] min-h-[400px]">

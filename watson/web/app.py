@@ -96,8 +96,30 @@ if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # MCP community graph server URL — configurable for shared instances
-MCP_SERVER_URL = os.environ.get("WATSON_MCP_URL", "http://localhost:8700")
-MCP_API_KEY = os.environ.get("MCP_API_KEY", "")  # Passed as X-API-Key header on writes
+# Priority: env var > config file > default
+def _load_mcp_config() -> dict:
+    """Load MCP settings from config file (env overrides)."""
+    mcp = {
+        "url": os.environ.get("WATSON_MCP_URL", ""),
+        "key": os.environ.get("MCP_API_KEY", ""),
+    }
+    try:
+        cfg_path = Path.home() / ".watson" / "config.json"
+        if cfg_path.exists():
+            cfg = json.loads(cfg_path.read_text())
+            if not mcp["url"]:
+                mcp["url"] = cfg.get("mcp_url", "")
+            if not mcp["key"]:
+                mcp["key"] = cfg.get("mcp_api_key", "")
+    except Exception:
+        pass
+    if not mcp["url"]:
+        mcp["url"] = "http://localhost:8700"
+    return mcp
+
+_mcp = _load_mcp_config()
+MCP_SERVER_URL = _mcp["url"]
+MCP_API_KEY = _mcp["key"]
 
 # ── Auto-start local MCP server ──────────────────────────────────
 
@@ -311,30 +333,64 @@ async def agent_investigate(req: InvestigateRequest):
             
             # ── Per-case consent: publish to community knowledge graph ──
             if req.publish_to_graph and result.get("findings"):
+                publish_error = None
                 try:
-                    from watson.graph import KnowledgeGraph
-                    g = KnowledgeGraph()
-                    published = 0
-                    for f in result["findings"]:
-                        if hasattr(f, 'tier') and f.tier in ("CONFIRMED", "PROBABLE"):
-                            entities = getattr(f, 'entities', [])
+                    # Check if key is available for remote MCP
+                    is_local = "localhost" in MCP_SERVER_URL or "127.0.0.1" in MCP_SERVER_URL
+                    if not is_local and not MCP_API_KEY:
+                        publish_error = "No MCP API key configured. Set it in onboarding or with: export MCP_API_KEY=your-key"
+                    else:
+                        # Use the engine's report if available, otherwise publish manually
+                        engine_report = getattr(result, '_report', None)
+                        if engine_report:
+                            _pub_result, _pub_err = _publish_to_mcp(engine_report)
+                            if _pub_err:
+                                publish_error = _pub_err
+                        else:
+                            # Fallback: publish entities from findings directly
+                            import httpx
+                            entities = []
+                            for f in result["findings"]:
+                                if hasattr(f, 'tier') and f.tier in ("CONFIRMED", "PROBABLE"):
+                                    for ent in getattr(f, 'entities', []):
+                                        entities.append({
+                                            "value": ent.get("value", str(ent)),
+                                            "type": ent.get("type", "unknown"),
+                                            "source": ent.get("source", ""),
+                                            "tier": f.tier if hasattr(f, 'tier') else "PROBABLE",
+                                            "case_id": result["case_id"],
+                                        })
                             if entities:
-                                for entity in entities:
-                                    g.upsert_entity(
-                                        type_=entity.get("type", "unknown"),
-                                        value=entity.get("value", str(entity)),
-                                        case_id=result["case_id"],
-                                        label=entity.get("label", "")[:200],
-                                    )
-                                    published += 1
-                    if published:
-                        logger.info("graph_published", extra={
-                            "case_id": result["case_id"],
-                            "entities": published,
-                            "consent": "per_case",
-                        })
+                                payload = {
+                                    "case_id": result["case_id"],
+                                    "target": req.query,
+                                    "target_type": "",
+                                    "findings_count": len(result["findings"]),
+                                    "confirmed_count": result.get("confirmed_count", 0),
+                                    "verifiability": "",
+                                    "date": "",
+                                    "entities": entities,
+                                }
+                                resp = httpx.post(
+                                    f"{MCP_SERVER_URL}/api/ingest",
+                                    json=payload, timeout=10,
+                                    headers={"X-API-Key": MCP_API_KEY} if MCP_API_KEY else {},
+                                )
+                                if resp.status_code != 200:
+                                    publish_error = f"MCP server returned {resp.status_code}"
                 except Exception as e:
-                    logger.warning("graph_publish_failed: %s", e)
+                    publish_error = str(e)
+
+                if publish_error:
+                    sse.send(client_id, "graph_error", {
+                        "message": f"Graph publish failed: {publish_error}",
+                        "case_id": result["case_id"],
+                    })
+                else:
+                    sse.send(client_id, "graph_published", {
+                        "case_id": result["case_id"],
+                        "url": MCP_SERVER_URL,
+                    })
             
             logger.info("investigation_complete", extra={
                 "client_id": client_id, "query": req.query[:80],
@@ -991,10 +1047,12 @@ async def save_case(case_id: str, req: SaveRequest = SaveRequest()):
     
     # Publish to MCP only with explicit consent
     published = False
+    publish_error = None
     if req.consent_publish:
-        _publish_to_mcp(report)
-        published = True
-    
+        ok, err = _publish_to_mcp(report)
+        published = ok
+        publish_error = err
+
     return {
         "case_id": case_id,
         "target": report.query,
@@ -1002,49 +1060,81 @@ async def save_case(case_id: str, req: SaveRequest = SaveRequest()):
         "verifiability": f"{report.verifiability_score:.0%}",
         "status": "saved",
         "published": published,
+        "publish_error": publish_error,
     }
 
 
 def _publish_to_mcp(report):
-    """Publish case entities to the MCP knowledge graph server with full case data."""
+    """Publish case entities to the MCP knowledge graph server with full case data.
+
+    Uses the engine's entity extraction to get real typed entities, not finding titles.
+    Returns (success: bool, error: str | None).
+    """
     try:
         import httpx
-        entities = []
-        for f in report.findings:
-            if f.tier in ("CONFIRMED", "PROBABLE"):
-                entities.append({
-                    "value": f.title[:200],
-                    "type": "finding",
-                    "source": f.source_url or "",
-                    "tier": f.tier,
-                    "case_id": report.case_id,
-                })
-        if entities:
-            payload = {
+        # Use the engine's entity extraction — not finding titles
+        from src.watson.orchestration.engine import OrchestrationEngine
+
+        # Build combined text from all finding titles and bodies
+        text = " ".join(f"{f.title} {f.body}" for f in report.findings)
+        entities = OrchestrationEngine._extract_entities_from_text(text)
+        if not entities:
+            return False, "No typed entities to publish"
+
+        payload = {
+            "case_id": report.case_id,
+            "target": report.query,
+            "target_type": getattr(report, "target_type", "person"),
+            "findings_count": len(report.findings),
+            "confirmed_count": sum(1 for f in report.findings if f.tier == "CONFIRMED"),
+            "verifiability": f"{report.verifiability_score:.0%}",
+            "date": getattr(report, "timestamp", ""),
+            "entities": [{
+                "value": e.get("value", ""),
+                "type": e.get("type", "unknown"),
+                "source": e.get("source", ""),
+                "tier": e.get("tier", "PROBABLE"),
                 "case_id": report.case_id,
-                "target": report.query,
-                "target_type": getattr(report, "target_type", "unknown"),
-                "findings_count": len(report.findings),
-                "confirmed_count": sum(1 for f in report.findings if f.tier == "CONFIRMED"),
-                "verifiability": f"{report.verifiability_score:.0%}",
-                "date": getattr(report, "timestamp", ""),
-                "entities": entities,
-            }
-            httpx.post(f"{MCP_SERVER_URL}/api/ingest", json=payload, timeout=10,
-                       headers={"X-API-Key": MCP_API_KEY} if MCP_API_KEY else {})
-    except Exception:
-        pass  # MCP server may not be running
+            } for e in entities],
+        }
+
+        resp = httpx.post(
+            f"{MCP_SERVER_URL}/api/ingest", json=payload, timeout=10,
+            headers={"X-API-Key": MCP_API_KEY} if MCP_API_KEY else {},
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            ingested = data.get("entities_ingested", 0)
+            rejected = data.get("entities_rejected", 0)
+            logger.info("mcp_published", extra={
+                "case_id": report.case_id,
+                "ingested": ingested,
+                "rejected": rejected,
+            })
+            return True, None
+        elif resp.status_code == 401:
+            return False, "Invalid MCP API key"
+        elif resp.status_code == 503:
+            return False, "MCP server not configured (no API key set)"
+        else:
+            return False, f"MCP server returned {resp.status_code}"
+    except Exception as e:
+        logger.warning("mcp_publish_error: %s", e)
+        return False, str(e)
 
 
 @app.post("/api/cases/{case_id}/publish")
 async def publish_case(case_id: str):
-    """Publish an already-saved case to the MCP community graph."""
+    """Publish an already-saved case to the MCP community graph.
+
+    Uses the engine's entity extraction for properly-typed entities.
+    """
     from pathlib import Path
     case_path = Path.home() / "watson-cases" / f"{case_id}.md"
     if not case_path.exists():
         raise HTTPException(404, f"Case {case_id} not found in archives")
 
-    # Reconstruct entities from the saved markdown
+    # Reconstruct metadata and extract typed entities
     import re
     text = case_path.read_text()
     target = ""
@@ -1063,50 +1153,95 @@ async def publish_case(case_id: str):
     verifiability = vm.group(1).strip() if vm else ""
     date_str = dm.group(1).strip() if dm else ""
 
-    # Extract finding titles — format: "- 🟡 **Title** [TIER] (NN% confidence)"
-    entities = []
-    for line in text.splitlines():
-        line = line.strip()
-        # Match: "- **Title** [TIER]" or "- 🟡 **Title** [TIER]"
-        m = re.search(r"-\s*(?:[🟢🟡🟠🔴]\s*)?\*\*(.+?)\*\*\s*\[([A-Z]+)\]", line)
-        if m:
-            title = m.group(1).strip()
-            tier_raw = m.group(2)
-            tier = "CONFIRMED" if tier_raw == "PRIMARY" else "PROBABLE"
-            entities.append({
-                "value": title[:200],
-                "type": "finding",
-                "source": "",
-                "tier": tier,
-                "case_id": case_id,
-            })
+    # Use engine's entity extraction — produces properly-typed entities
+    from src.watson.orchestration.engine import OrchestrationEngine
+    entities = OrchestrationEngine._extract_entities_from_text(text)
+    
+    if not entities:
+        return {"status": "no_entities", "case_id": case_id}
 
-    if entities:
-        try:
-            import httpx
-            payload = {
+    if not MCP_API_KEY and "localhost" not in MCP_SERVER_URL:
+        raise HTTPException(400, "No MCP API key configured. Set MCP_API_KEY in env or run onboarding.")
+
+    try:
+        import httpx
+        payload = {
+            "case_id": case_id,
+            "target": target,
+            "target_type": target_type,
+            "findings_count": findings_count,
+            "confirmed_count": confirmed_count,
+            "verifiability": verifiability,
+            "date": date_str,
+            "entities": [{
+                "value": e["value"],
+                "type": e["type"],
+                "source": "",
+                "tier": "PROBABLE",
                 "case_id": case_id,
-                "target": target,
-                "target_type": target_type,
-                "findings_count": findings_count,
-                "confirmed_count": confirmed_count,
-                "verifiability": verifiability,
-                "date": date_str,
-                "entities": entities,
+            } for e in entities],
+        }
+        resp = httpx.post(f"{MCP_SERVER_URL}/api/ingest", json=payload, timeout=10,
+                        headers={"X-API-Key": MCP_API_KEY} if MCP_API_KEY else {})
+        if resp.status_code == 200:
+            data = resp.json()
+            return {
+                "status": "published",
+                "case_id": case_id,
+                "entities_sent": len(entities),
+                "entities_ingested": data.get("entities_ingested", 0),
+                "entities_rejected": data.get("entities_rejected", 0),
             }
-            resp = httpx.post(f"{MCP_SERVER_URL}/api/ingest", json=payload, timeout=10,
-                            headers={"X-API-Key": MCP_API_KEY} if MCP_API_KEY else {})
-            if resp.status_code == 200:
-                return {
-                    "status": "published",
-                    "case_id": case_id,
-                    "entities_published": len(entities),
-                    "data": resp.json(),
-                }
-            raise HTTPException(502, f"MCP server returned {resp.status_code}")
-        except httpx.ConnectError:
-            raise HTTPException(503, "MCP server not running on port 8776")
-    return {"status": "no_entities", "case_id": case_id}
+        elif resp.status_code == 401:
+            raise HTTPException(401, "Invalid MCP API key")
+        elif resp.status_code == 503:
+            raise HTTPException(503, "MCP server not configured")
+        raise HTTPException(502, f"MCP server returned {resp.status_code}")
+    except httpx.ConnectError:
+        raise HTTPException(503, f"MCP server not reachable at {MCP_SERVER_URL}")
+
+
+@app.get("/api/graph/status")
+async def graph_status():
+    """Check connection to the MCP community knowledge graph.
+
+    Returns connection status, whether a key is configured, and graph stats.
+    Frontend uses this to show the connection indicator next to the publish checkbox.
+    """
+    is_local = "localhost" in MCP_SERVER_URL or "127.0.0.1" in MCP_SERVER_URL
+    has_key = bool(MCP_API_KEY)
+
+    status = {
+        "mcp_url": MCP_SERVER_URL,
+        "configured": has_key or is_local,
+        "reason": "",
+        "stats": None,
+    }
+
+    if is_local:
+        status["reason"] = "Local graph — always available"
+    elif not has_key:
+        status["reason"] = "No MCP API key configured"
+        return status
+
+    try:
+        import httpx
+        resp = httpx.get(
+            f"{MCP_SERVER_URL}/api/stats",
+            timeout=3,
+            headers={"X-API-Key": MCP_API_KEY},
+        )
+        if resp.status_code == 200:
+            status["stats"] = resp.json()
+            status["connected"] = True
+        else:
+            status["connected"] = False
+            status["reason"] = f"MCP server returned {resp.status_code}"
+    except Exception as e:
+        status["connected"] = False
+        status["reason"] = str(e)
+
+    return status
 
 
 @app.get("/api/public/search")
