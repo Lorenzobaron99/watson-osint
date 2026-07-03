@@ -27,8 +27,8 @@ MCP_API_KEY = os.environ.get("MCP_API_KEY", "")
 MCP_DEV_MODE = os.environ.get("WATSON_DEV", "") in ("1", "true", "yes")
 
 if not MCP_API_KEY and not MCP_DEV_MODE:
-    print("⚠  WARNING: MCP_API_KEY not set. Write endpoints are OPEN.")
-    print("   Set MCP_API_KEY env var or WATSON_DEV=1 to suppress this warning.")
+    print("⚠  WARNING: MCP_API_KEY not set. Write endpoints are BLOCKED (503).")
+    print("   Set MCP_API_KEY env var to enable publishing, or WATSON_DEV=1 for dev mode.")
 
 # ── Rate Limiting ───────────────────────────────────────────────
 
