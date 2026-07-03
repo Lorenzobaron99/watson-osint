@@ -63,8 +63,8 @@ htmlcov/
 # Skills (local only)
 skills/
 
-# Deprecated
-web/
+# Deprecated (root-level only)
+/web/
 docker/
 docker-compose.yml
 run_server.sh
@@ -72,6 +72,3 @@ run_web.sh
 scripts/
 cases/
 data/
-
-# Built frontend assets (build on install, not committed)
-watson/web/static/assets/

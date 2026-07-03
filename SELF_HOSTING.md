@@ -225,7 +225,7 @@ sudo systemctl enable --now watson-mcp
         <string>8700</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>/Users/lorenzobaron/Desktop/watson-osint</string>
+    <string>/path/to/watson-osint</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PYTHONPATH</key>
