@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { Shield, Search, GitBranch, Users, ArrowRight, Check } from "lucide-react";
+import { ArrowRight, Check } from "lucide-react";
+import watsonLogo from "../assets/watson-logo.png";
 
 const SHERLOCK_QUOTES = [
   '"It is a capital mistake to theorize before one has data."',
@@ -20,22 +21,18 @@ interface WelcomeOverlayProps {
 
 const STEPS = [
   {
-    icon: Search,
     title: "Investigate Anything",
     body: "Type a person, company, domain, email, crypto wallet, or research topic. Watson investigates autonomously across 7 phases — surface collection, identifier pivoting, deep investigation, cross-referencing, synthesis, and report.",
   },
   {
-    icon: GitBranch,
     title: "Connect the Dots",
     body: "Findings flow into the Case Board and Evidence Map automatically. Select two findings on the Case Board and click \"Deep Investigate\" to explore hidden connections between them.",
   },
   {
-    icon: Users,
     title: "Personnel Dossiers",
     body: "When Watson identifies notable people or organizations in an investigation, they automatically appear in the Personnel tab. You can also add suspects manually.",
   },
   {
-    icon: Shield,
     title: "Evidence-Backed",
     body: "Every finding carries a source URL and confidence score. Watson never fabricates data. Verifiability scores tell you how solid the evidence is — aim for 70%+.",
   },
@@ -72,8 +69,8 @@ export default function WelcomeOverlay({ onComplete }: WelcomeOverlayProps) {
 
         {/* Content */}
         <div className="p-8 text-center space-y-5">
-          <div className="mx-auto w-14 h-14 bg-primary/10 border border-primary/20 rounded-xl flex items-center justify-center">
-            {React.createElement(current.icon, { size: 28, className: "text-primary" })}
+          <div className="mx-auto w-24 h-24 rounded-xl flex items-center justify-center overflow-hidden">
+            <img src={watsonLogo} alt="Watson" className="w-full h-full object-contain" />
           </div>
 
           {step === 0 && (
