@@ -3885,23 +3885,156 @@ and confidence assessments. Follow the OUTPUT FORMAT specified above."""
         except Exception as e:
             logger.warning("case_save_failed: %s", e)
 
+    @staticmethod
+    def _classify_entity(value: str, hint_type: str = "") -> str:
+        """Classify an entity value into a proper type.
+        
+        Uses regex patterns for deterministic types, falls back to hint_type if valid,
+        otherwise returns 'unknown'.
+        """
+        v = (value or "").strip()
+        if not v:
+            return "unknown"
+        # Wallet addresses
+        if re.match(r'^0x[a-fA-F0-9]{40}$', v) or re.match(r'^[13][a-km-zA-HJ-NP-Z1-9]{25,34}$', v):
+            return "wallet"
+        # Domains
+        if re.match(r'^[a-zA-Z0-9][-a-zA-Z0-9]*\.[a-zA-Z]{2,}$', v):
+            return "domain"
+        # Email
+        if re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', v):
+            return "email"
+        # IP addresses
+        if re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', v):
+            return "ip"
+        # URL
+        if v.startswith("http://") or v.startswith("https://"):
+            return "url"
+        # Valid hint types
+        valid_types = {"person", "company", "organization", "domain", "email", 
+                       "wallet", "ip", "location", "phone", "url"}
+        hint = (hint_type or "").strip().lower()
+        if hint in valid_types:
+            return hint
+        # Heuristic: short strings with spaces are likely person names
+        # Long strings are likely organization/company names
+        if len(v.split()) >= 2 and len(v) < 60:
+            return "person"
+        if len(v) >= 3:
+            return "organization"
+        return "unknown"
+
     def _update_graph(self, report: InvestigationReport):
-        """Index case entities in knowledge graph."""
+        """Index case entities in knowledge graph with proper typing, relations, and MCP publish."""
+        import httpx
+        
         try:
             from watson.graph import KnowledgeGraph
             g = KnowledgeGraph()
+            entity_ids: list[str] = []
+            ingested_entities: list[dict] = []
+            
             for f in report.findings:
-                if f.entities:
-                    for entity in f.entities:
-                        g.add_entity(
-                            entity_type=entity.get("type", "unknown"),
-                            value=entity.get("value", entity.get("name", "")),
+                if not f.entities:
+                    continue
+                
+                finding_entity_pairs: list[tuple[str, str, str]] = []  # (id, type, value)
+                for entity in f.entities:
+                    raw_type = entity.get("type", "")
+                    raw_value = entity.get("value", entity.get("name", ""))
+                    if not raw_value or not raw_value.strip():
+                        continue
+                    
+                    # Properly classify the entity type
+                    real_type = self._classify_entity(raw_value, raw_type)
+                    if real_type == "unknown":
+                        continue
+                    
+                    label = entity.get("label", entity.get("name", raw_value))
+                    e = g.add_entity(
+                        entity_type=real_type,
+                        value=raw_value.strip(),
+                        case_id=report.case_id,
+                        label=label[:200] if label else raw_value.strip()[:200],
+                    )
+                    finding_entity_pairs.append((e.id, real_type, raw_value.strip()))
+                    ingested_entities.append({
+                        "value": raw_value.strip(),
+                        "type": real_type,
+                        "tier": f.tier if hasattr(f, 'tier') else "PROBABLE",
+                        "source": getattr(f, 'source_url', ''),
+                    })
+                
+                # Create relations between co-occurring entities within the same finding
+                for i in range(len(finding_entity_pairs)):
+                    for j in range(i + 1, len(finding_entity_pairs)):
+                        _, src_type, src_val = finding_entity_pairs[i]
+                        _, tgt_type, tgt_val = finding_entity_pairs[j]
+                        g.add_relation(
+                            source_type=src_type, source_value=src_val,
+                            relation_type="co_occurs_with",
+                            target_type=tgt_type, target_value=tgt_val,
                             case_id=report.case_id,
-                            label=entity.get("label", entity.get("name", "")),
+                            source_url=getattr(f, 'source_url', ''),
+                            confidence=getattr(f, 'confidence', 0.5),
+                            evidence=f.title[:500] if hasattr(f, 'title') else "",
                         )
+                
+                entity_ids.extend(eid for eid, _, _ in finding_entity_pairs)
+            
             g.add_case(report.case_id, report.query)
+            logger.info("graph_updated", extra={
+                "case_id": report.case_id,
+                "entities": len(entity_ids),
+                "ingested": len(ingested_entities),
+            })
+            
+            # Publish to MCP community graph
+            self._publish_to_mcp(report, ingested_entities)
+            
         except Exception as e:
             logger.warning("graph_update_failed: %s", e)
+    
+    def _publish_to_mcp(self, report: InvestigationReport, entities: list[dict]):
+        """Publish investigation entities to the MCP community knowledge graph."""
+        import httpx
+        import os
+        
+        mcp_url = os.environ.get("WATSON_MCP_URL", "http://localhost:8700")
+        mcp_key = os.environ.get("MCP_API_KEY", "")
+        
+        try:
+            conf_count = sum(1 for f in report.findings if getattr(f, 'tier', '') == 'CONFIRMED')
+            payload = {
+                "case_id": report.case_id,
+                "target": report.query,
+                "target_type": report.target_type or "",
+                "findings_count": len(report.findings),
+                "confirmed_count": conf_count,
+                "verifiability": f"{report.verifiability_score:.0%}" if hasattr(report, 'verifiability_score') else "",
+                "date": report.created_at[:10] if hasattr(report, 'created_at') else "",
+                "entities": entities,
+                "markdown": getattr(report, 'markdown', '')[:10000],
+            }
+            headers = {"X-API-Key": mcp_key} if mcp_key else {}
+            resp = httpx.post(
+                f"{mcp_url}/api/ingest",
+                json=payload,
+                headers=headers,
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                logger.info("mcp_published", extra={
+                    "case_id": report.case_id,
+                    "entities": len(entities),
+                })
+            else:
+                logger.warning("mcp_publish_failed", extra={
+                    "case_id": report.case_id,
+                    "status": resp.status_code,
+                })
+        except Exception as e:
+            logger.warning("mcp_publish_error: %s", e)
 
 
 # ── Singleton ──────────────────────────────────────────────────

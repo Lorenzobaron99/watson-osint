@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -291,8 +292,34 @@ class IngestPayload(BaseModel):
     markdown: str = ""
 
 
-# Track which cases have been published
+# Track which cases have been published — persisted to JSONL
+PUBLISHED_PATH = Path.home() / ".watson" / "graph" / "published.jsonl"
+PUBLISHED_PATH.parent.mkdir(parents=True, exist_ok=True)
+
 _published_cases: dict[str, dict] = {}
+
+def _load_published():
+    """Load published cases from disk."""
+    global _published_cases
+    if PUBLISHED_PATH.exists():
+        try:
+            for line in PUBLISHED_PATH.read_text().splitlines():
+                if line.strip():
+                    d = json.loads(line)
+                    _published_cases[d["case_id"]] = d
+        except Exception:
+            pass
+
+def _save_published():
+    """Persist published cases to disk."""
+    try:
+        lines = [json.dumps(c) + "\n" for c in _published_cases.values()]
+        PUBLISHED_PATH.write_text("".join(lines))
+    except Exception:
+        pass
+
+# Load on startup
+_load_published()
 
 
 @mcp.post("/api/ingest")
@@ -321,6 +348,7 @@ async def api_ingest(payload: IngestPayload):
         "date": payload.date,
         "ingested_entities": ingested,
     }
+    _save_published()
 
     return {
         "status": "ingested",
