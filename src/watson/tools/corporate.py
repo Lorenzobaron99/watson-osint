@@ -1,0 +1,287 @@
+"""Corporate & Finance tool — company records, sanctions lists, SEC filings."""
+
+from __future__ import annotations
+
+import urllib.parse
+
+from .base import OSINTTool
+from .registry import registry
+from ..core.models import Finding, FindingSeverity, FindingSource
+from ..utils.http import get_client
+
+
+class CorporateTool(OSINTTool):
+    """Investigate companies — OpenCorporates, OpenSanctions, SEC EDGAR."""
+
+    category = FindingSource.CORPORATE
+    name = "corporate-finance"
+    description = "Company registry lookup (OpenCorporates), sanctions check (OpenSanctions), SEC EDGAR"
+    free_tier_available = True
+    rate_limit_rps = 2.0
+
+    OPENCORPORATES_API = "https://api.opencorporates.com/v0.4/companies/search"
+    OPENSANCTIONS_API = "https://api.opensanctions.org/search/default"
+    SEC_EDGAR_SEARCH = "https://efts.sec.gov/LATEST/search-index?q={query}&pageSize=5"
+
+    async def investigate(self, query: str, context: str = "") -> list[Finding]:
+        findings: list[Finding] = []
+
+        company = self._extract_company_name(query)
+        if not company:
+            # Also check for person names (sanctions)
+            person = self._extract_person_name(query)
+            if person:
+                findings.extend(await self._check_sanctions(person))
+                return findings
+
+            # Fallback: extract any capitalized name for sanctions/company check
+            entity = self._extract_entity(query)
+            if entity:
+                findings.extend(await self._check_sanctions(entity))
+                findings.append(self._make_finding(
+                    title=f"🔍 Entity search: {entity}",
+                    description=(
+                        f"Searching corporate records and sanctions for **{entity}**:\n"
+                        f"- [OpenCorporates](https://opencorporates.com/companies?q={urllib.parse.quote(entity)})\n"
+                        f"- [OpenSanctions](https://opensanctions.org/search/?q={urllib.parse.quote(entity)})\n"
+                        f"- [Google](https://www.google.com/search?q={urllib.parse.quote(entity)}+company+sanctions)"
+                    ),
+                    evidence=[
+                        f"https://opencorporates.com/companies?q={urllib.parse.quote(entity)}",
+                        f"https://opensanctions.org/search/?q={urllib.parse.quote(entity)}",
+                    ],
+                    confidence=0.5,
+                ))
+                return findings
+            return findings
+
+        # 1. OpenCorporates search
+        oc_result = await self._search_opencorporates(company)
+        if oc_result:
+            findings.append(oc_result)
+
+        # 2. Sanctions check
+        sanctions = await self._check_sanctions(company)
+        findings.extend(sanctions)
+
+        # 3. SEC EDGAR (for US companies)
+        edgar = await self._search_edgar(company)
+        if edgar:
+            findings.append(edgar)
+
+        return findings
+
+    async def _search_opencorporates(self, company: str) -> Finding | None:
+        """Search OpenCorporates for company records. Uses API key if configured."""
+        import httpx
+        try:
+            from watson.api_keys import get_key
+            api_token = get_key("opencorporates")
+            
+            params: dict = {"q": company, "per_page": 5}
+            headers = {"User-Agent": "WatsonOSINT/0.3"}
+            if api_token:
+                headers["Authorization"] = f"Token {api_token}"
+            
+            async with httpx.AsyncClient(timeout=10) as c:
+                resp = await c.get(self.OPENCORPORATES_API, params=params, headers=headers)
+                if resp.status_code != 200:
+                    return None
+                data = resp.json()
+
+            if not isinstance(data, dict):
+                return None
+            results = data.get("results", {}).get("companies", [])
+            if results:
+                companies = []
+                for r in results[:5]:
+                    c = r.get("company", {})
+                    name = c.get("name", "Unknown")
+                    jurisdiction = c.get("jurisdiction_code", "??")
+                    company_number = c.get("company_number", "")
+                    companies.append(f"- **{name}** ({jurisdiction}, #{company_number})")
+
+                return self._make_finding(
+                    title=f"🏢 Company records: {len(results)} matches for '{company}'",
+                    description="\n".join(companies),
+                    evidence=[f"https://opencorporates.com/companies?q={urllib.parse.quote(company)}"],
+                    confidence=0.85,
+                    query=company,
+                    result_count=len(results),
+                )
+        except Exception as e:
+            return self._make_finding(
+                title=f"⚠️ OpenCorporates lookup failed for '{company}'",
+                description=f"API error: {str(e)[:200]}. Try manually: https://opencorporates.com/companies?q={urllib.parse.quote(company)}",
+                evidence=[f"https://opencorporates.com/companies?q={urllib.parse.quote(company)}"],
+                confidence=0.1,
+                severity=FindingSeverity.LOW,
+                query=company,
+            )
+        return None
+
+    async def _check_sanctions(self, name: str) -> list[Finding]:
+        """Check OpenSanctions for sanctions/restrictions via authenticated API.
+        
+        Filters results: only shows entities whose name/aliases actually contain
+        the search term. OpenSanctions search is fuzzy — "Aviloop" returns
+        unrelated Georgian LLCs, Russian oligarchs, etc. without filtering.
+        """
+        findings: list[Finding] = []
+        import httpx
+
+        try:
+            import os
+            api_key = os.environ.get("OPENSANCTIONS_API_KEY", "")
+            params = {"q": name, "limit": 10}
+            headers = {"User-Agent": "WatsonOSINT/0.3"}
+            if api_key:
+                headers["Authorization"] = f"ApiKey {api_key}"
+            
+            async with httpx.AsyncClient(timeout=10) as raw:
+                resp = await raw.get(self.OPENSANCTIONS_API, params=params, headers=headers)
+                if resp.status_code != 200:
+                    return findings
+                data = resp.json()
+
+            results = data.get("results", [])
+            # Relevance filter: name must appear in caption/aliases (case-insensitive)
+            query_lower = name.lower()
+            relevant = []
+            for r in results:
+                caption = (r.get("caption") or r.get("name") or "").lower()
+                aliases = " ".join(r.get("aliases", [])).lower()
+                if query_lower in caption or query_lower in aliases:
+                    relevant.append(r)
+            
+            if relevant:
+                sanctioned = []
+                for r in relevant[:5]:
+                    r_name = r.get("caption", r.get("name", "Unknown"))
+                    schema = r.get("schema", "")
+                    countries = ", ".join(r.get("countries", []))
+                    datasets = r.get("datasets", [])
+                    sanction_lists = ", ".join(datasets) if datasets else "N/A"
+                    topics = r.get("topics", [])
+                    topic_str = ", ".join(topics) if topics else ""
+                    
+                    sanctioned.append(
+                        f"- **{r_name}** [{schema}]\n"
+                        f"  Countries: {countries}\n"
+                        f"  Sanction lists: {sanction_lists}\n"
+                        f"  Topics: {topic_str}"
+                    )
+
+                findings.append(
+                    self._make_finding(
+                        title=f"🚨 SANCTIONS MATCH: {len(relevant)} entries for '{name}'",
+                        description="\n".join(sanctioned),
+                        evidence=[f"https://opensanctions.org/search/?q={urllib.parse.quote(name)}"],
+                        confidence=0.95,
+                        query=name,
+                        result_count=len(relevant),
+                        sanction_match=True,
+                    )
+                )
+            else:
+                findings.append(
+                    self._make_finding(
+                        title=f"✅ No sanctions found: '{name}'",
+                        description=f"No relevant sanctions matches in OpenSanctions ({len(results)} raw results filtered — none contained the target name).",
+                        confidence=0.85,
+                        query=name,
+                        sanction_match=False,
+                    )
+                )
+        except Exception:
+            pass
+
+        return findings
+
+    async def _search_edgar(self, company: str) -> Finding | None:
+        """Search SEC EDGAR for US company filings."""
+        try:
+            return self._make_finding(
+                title=f"📊 SEC EDGAR search ready: {company}",
+                description="Click to search SEC filings for this company.",
+                evidence=[
+                    f"https://www.sec.gov/cgi-bin/browse-edgar?company={urllib.parse.quote(company)}"
+                ],
+                confidence=0.7,
+                query=company,
+            )
+        except Exception:
+            pass
+        return None
+
+    def _extract_company_name(self, text: str) -> str | None:
+        """Extract a company name from query text."""
+        import re
+
+        patterns = [
+            r"(?:company|corporation|business|firm|entity)\s+(?:named|called|is\s+)?['\"]?([A-Z][A-Za-z0-9\s&.,]+?)(?:\s+(?:and|or|\.|$|,))",
+            r"(?:investigate|research|look\s+up|check|audit)\s+(?:the\s+)?(?:company\s+)?['\"]?([A-Z][A-Za-z0-9\s&.,]+?)(?:\s+(?:and|or|\.|$))",
+            r"(?:who owns|who controls|ownership of)\s+['\"]?([A-Z][A-Za-z0-9\s&.,]+?)(?:\s+(?:and|or|\?|\.|$))",
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                name = match.group(1).strip().rstrip(".,")
+                # Filter out common non-company words
+                if len(name.split()) >= 1 and name.lower() not in (
+                    "this", "that", "the", "a", "an"
+                ):
+                    return name
+
+        return None
+
+    def _extract_person_name(self, text: str) -> str | None:
+        """Extract a person's name from query text."""
+        import re
+
+        patterns = [
+            r"(?:person|individual|someone|called|named)\s+['\"]?([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})['\"]?",
+            r"(?:who is|research|look\s+up|check|investigate)\s+['\"]?([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})['\"]?",
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return match.group(1).strip()
+
+        return None
+
+    def _extract_entity(self, text: str) -> str | None:
+        """Extract any capitalized entity name (person or company) from unstructured text."""
+        import re
+
+        # Strip common investigative keywords
+        stripped = re.sub(
+            r'\b(?:company|companies|sanctions?|corporate|investigate|research|look\s+up|check|search|find)\b',
+            '', text, flags=re.IGNORECASE
+        )
+
+        # Strip quotes
+        stripped = re.sub(r'["\']', '', stripped)
+
+        # Find capitalized name sequences (1-3 words)
+        match = re.search(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b', stripped)
+        if match:
+            name = match.group(1).strip()
+            if len(name) > 2:
+                return name
+
+        # Fallback: any alphanumeric entity (e.g. "OpenAI", "DeepSeek", "Company123")
+        match = re.search(r'\b([A-Za-z][A-Za-z0-9]{2,}(?:\s+[A-Za-z][A-Za-z0-9]{1,}){0,2})\b', stripped)
+        if match:
+            name = match.group(1).strip()
+            if name.lower() not in ("who", "what", "where", "when", "why", "how", "the", "and", "for", "with"):
+                return name
+
+        return None
+
+
+# Register
+corporate_tool = CorporateTool()
+registry.register(corporate_tool)

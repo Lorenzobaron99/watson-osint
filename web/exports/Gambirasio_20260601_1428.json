@@ -1,0 +1,91 @@
+{
+  "report_type": "OSINT Intelligence Brief",
+  "case": "Gambirasio",
+  "query": "Gaza",
+  "generated_at": "2026-06-01T14:28:56.917582",
+  "risk_assessment": {
+    "score": 1.5,
+    "level": "\ud83d\udfe2 LOW",
+    "justification": "Limited findings of concern. Routine monitoring sufficient."
+  },
+  "executive_summary": "The investigation into the Gaza conflict reveals a wealth of open-source intelligence tools that can be leveraged to monitor and analyze the situation in real-time. ACLED provides structured, historical conflict data with high confidence, while LiveUAMap offers geolocated, near-real-time event tracking. Additionally, satellite-based tools like NASA FIRMS and flight tracking via Flightradar24 can supplement these sources to detect military activity and infrastructure damage. Together, these resources enable a comprehensive, multi-layered approach to tracking the evolving conflict.",
+  "key_findings": [
+    {
+      "title": "\ud83d\udcca ACLED conflict data: Gaza",
+      "severity": "info",
+      "confidence": 0.85,
+      "source": "conflict",
+      "tool": "conflict-monitor",
+      "analysis": "The Armed Conflict Location & Event Data Project (ACLED) tracks political violence and protest events worldwide. Use their dashboard to filter by location, date, and event type.",
+      "evidence": [
+        "https://acleddata.com/dashboard/#/dashboard",
+        "https://acleddata.com/data-export-tool/"
+      ]
+    },
+    {
+      "title": "\ud83d\uddfa Live conflict map: Gaza",
+      "severity": "info",
+      "confidence": 0.8,
+      "source": "conflict",
+      "tool": "conflict-monitor",
+      "analysis": "[LiveUAMap](https://liveuamap.com/) provides real-time conflict monitoring with geolocated events. Search for 'Gaza' on the map to see recent incidents, frontlines, and event timelines.",
+      "evidence": [
+        "https://liveuamap.com/?q=Gaza",
+        "https://liveuamap.com/"
+      ]
+    },
+    {
+      "title": "\ud83d\udce1 OSINT conflict resources for Gaza",
+      "severity": "info",
+      "confidence": 0.7,
+      "source": "conflict",
+      "tool": "conflict-monitor",
+      "analysis": "Recommended monitoring resources:\n- [LiveUAMap](https://liveuamap.com/?q=Gaza) \u2014 real-time mapped events\n- [ACLED Dashboard](https://acleddata.com/dashboard/) \u2014 structured event data\n- [NASA FIRMS](https://firms.modaps.eosdis.nasa.gov/map/) \u2014 satellite fire/thermal detection\n- [Flightradar24](https://www.flightradar24.com/) \u2014 aircraft tracking near conflict zones\n- [MarineTraffic](https://www.marinetraffic.com/) \u2014 vessel movements",
+      "evidence": []
+    }
+  ],
+  "entities": {
+    "people": [
+      "Event Data Project",
+      "Gaza Recommended"
+    ],
+    "domains": [
+      "acleddata.com",
+      "firms.modaps.eosdis.nasa.gov",
+      "liveuamap.com",
+      "www.flightradar24.com",
+      "www.marinetraffic.com"
+    ]
+  },
+  "connections": [],
+  "recommended_actions": [
+    "Set up automated daily exports from ACLED for Gaza-specific events, filtering by event type (e.g., battles, explosions) and date range (last 30 days) to build a time-series dataset.",
+    "Monitor LiveUAMap for Gaza every 6 hours over the next 72 hours, recording geolocated incidents and noting any patterns in event timing or location clusters.",
+    "Cross-reference NASA FIRMS thermal anomaly data for the Gaza region with LiveUAMap incidents to identify potential airstrike or artillery fire locations within a 24-hour window.",
+    "Use Flightradar24 to analyze flight patterns over Gaza and surrounding airspace for the past 7 days, flagging any military aircraft or unusual civilian flight diversions.",
+    "Create a composite map overlaying ACLED event data, LiveUAMap incidents, and NASA FIRMS hotspots to visualize spatial and temporal correlations.",
+    "Compile a daily intelligence summary integrating findings from all four sources, highlighting any discrepancies or corroborations between real-time and historical data."
+  ],
+  "investigation_metadata": {
+    "total_findings": 3,
+    "sources_used": 1,
+    "by_severity": {
+      "info": 3
+    },
+    "by_source": {
+      "conflict": 3
+    }
+  },
+  "ai_synthesis": {
+    "actions": [
+      "Set up automated daily exports from ACLED for Gaza-specific events, filtering by event type (e.g., battles, explosions) and date range (last 30 days) to build a time-series dataset.",
+      "Monitor LiveUAMap for Gaza every 6 hours over the next 72 hours, recording geolocated incidents and noting any patterns in event timing or location clusters.",
+      "Cross-reference NASA FIRMS thermal anomaly data for the Gaza region with LiveUAMap incidents to identify potential airstrike or artillery fire locations within a 24-hour window.",
+      "Use Flightradar24 to analyze flight patterns over Gaza and surrounding airspace for the past 7 days, flagging any military aircraft or unusual civilian flight diversions.",
+      "Create a composite map overlaying ACLED event data, LiveUAMap incidents, and NASA FIRMS hotspots to visualize spatial and temporal correlations.",
+      "Compile a daily intelligence summary integrating findings from all four sources, highlighting any discrepancies or corroborations between real-time and historical data."
+    ],
+    "narrative": "The investigation into the Gaza conflict has identified three primary OSINT resources that, when combined, offer a powerful analytical framework. The Armed Conflict Location & Event Data Project (ACLED) provides a structured, high-confidence dataset of political violence and protest events, allowing for historical trend analysis and pattern recognition. This is complemented by LiveUAMap, which offers real-time, geolocated incident reporting, enabling investigators to track the immediate evolution of frontlines and key events as they unfold. The inclusion of NASA FIRMS and Flightradar24 further expands the toolkit, with satellite thermal detection capable of identifying fires from airstrikes or artillery, and flight tracking revealing potential military aviation activity or disruptions to civilian airspace.\n\nThese findings paint a picture of a conflict that can be monitored through multiple, independent data streams, each with its own strengths. ACLED's structured data is ideal for longitudinal studies and statistical analysis, while LiveUAMap provides the granular, up-to-the-minute detail needed for tactical assessments. The satellite and flight tracking tools add a layer of remote sensing that can corroborate or challenge ground reports. The convergence of these sources\u2014especially when cross-referenced\u2014can yield a more accurate and timely understanding of the conflict's dynamics, from civilian displacement to military operations.",
+    "summary": "The investigation into the Gaza conflict reveals a wealth of open-source intelligence tools that can be leveraged to monitor and analyze the situation in real-time. ACLED provides structured, historical conflict data with high confidence, while LiveUAMap offers geolocated, near-real-time event tracking. Additionally, satellite-based tools like NASA FIRMS and flight tracking via Flightradar24 can supplement these sources to detect military activity and infrastructure damage. Together, these resources enable a comprehensive, multi-layered approach to tracking the evolving conflict."
+  }
+}

@@ -1,0 +1,53 @@
+[project]
+name = "watson-osint"
+version = "1.0.0"
+description = "Autonomous OSINT investigation engine — Bellingcat methodology, graph-native, community-powered"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+authors = [{name = "Lorenzo Baron", email = "baron.lorenzo99@gmail.com"}]
+keywords = ["osint", "investigation", "intelligence", "bellingcat", "open-source"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: Internet :: WWW/HTTP :: Indexing/Search",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "aiohttp>=3.9",
+    "fastapi>=0.109",
+    "uvicorn>=0.27",
+    "pydantic>=2.0",
+    "httpx>=0.26",
+    "ddgs>=5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+full = [
+    "gliner>=0.2",
+    "neo4j>=5.0",
+]
+
+[project.scripts]
+watson = "watson.cli:main_entry"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src", "."]
+include = ["watson*", "src.watson*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

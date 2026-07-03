@@ -1,0 +1,1222 @@
+"""
+Watson Web — FastAPI application (Phase 1 rewrite).
+
+Routes:
+  GET  /                         — Chat UI
+  GET  /health                   — Health check
+  POST /api/chat                 — Tool-calling chat (streaming SSE)
+  POST /api/agent/investigate    — Agent investigation
+  GET  /api/agent/stream/<id>    — Investigation SSE stream
+  POST /api/agent/chat/stream    — Chat SSE (with tools)
+  + memory, scheduler, bellingcat, export, knowledge, terminal
+"""
+
+from __future__ import annotations
+
+import threading
+import asyncio
+import json
+import logging
+import os
+import re
+import sys
+import time
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
+
+# Ensure both src/ and project root are on path for imports
+#   src/watson/*  → src.watson.agent, src.watson.auth, ...
+#   watson/*      → watson.reporter, watson.web.middleware, ...
+_src = Path(__file__).resolve().parent.parent.parent / "src"
+_root = Path(__file__).resolve().parent.parent.parent
+for p in (str(_root), str(_src)):
+    if p not in sys.path:
+        sys.path.insert(0, p)
+
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+# ── App ─────────────────────────────────────────────────────────
+
+app = FastAPI(
+    title="Watson OSINT",
+    description="The OSINT investigation engine. Evidence-based. Graph-native.",
+    version="0.3.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Auth middleware
+from src.watson.auth import AuthMiddleware
+app.add_middleware(AuthMiddleware)
+
+# ── Health + Metrics ─────────────────────────────────────────────
+
+from src.watson.infra.cache import all_cache_stats
+from src.watson.infra.retry import _circuits
+from src.watson.persistence import get_store
+from src.watson.metrics import prometheus_endpoint, track_investigation
+
+@app.get("/api/metrics")
+async def metrics():
+    """Prometheus-compatible metrics endpoint."""
+    return Response(content=prometheus_endpoint(), media_type="text/plain")
+
+@app.get("/api/health")
+async def health():
+    """Health check with system status."""
+    store = get_store()
+    stats = store.get_stats()
+    cache_stats = all_cache_stats()
+    open_circuits = sum(1 for cb in _circuits.values() if cb.is_open)
+    return {
+        "status": "ok",
+        "version": "0.3.0-enterprise",
+        "investigations": stats,
+        "caches": {k: {"size": v["size"], "hit_rate": f"{v.get('hits',0)/max(v.get('hits',0)+v.get('misses',1),1):.1%}"}
+                   for k, v in cache_stats.items()},
+        "circuit_breakers_open": open_circuits,
+    }
+
+BASE_DIR = Path(__file__).resolve().parent
+TEMPLATES_DIR = BASE_DIR / "templates"
+STATIC_DIR = BASE_DIR / "static"
+if STATIC_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=str(STATIC_DIR / "assets")), name="assets")
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+# MCP community graph server URL — configurable for shared instances
+MCP_SERVER_URL = os.environ.get("WATSON_MCP_URL", "http://localhost:8700")
+MCP_API_KEY = os.environ.get("MCP_API_KEY", "")  # Passed as X-API-Key header on writes
+
+# ── Auto-start local MCP server ──────────────────────────────────
+
+def _start_mcp_server():
+    """Start the MCP knowledge graph server as a subprocess if URL is local."""
+    if "localhost" not in MCP_SERVER_URL and "127.0.0.1" not in MCP_SERVER_URL:
+        return  # Remote MCP — assume it's already running
+    
+    mcp_port = MCP_SERVER_URL.rsplit(":", 1)[-1]
+    import subprocess as _sp
+    import sys as _sys
+    try:
+        proc = _sp.Popen(
+            [_sys.executable, "-m", "uvicorn", "watson.mcp_server:mcp",
+             "--host", "0.0.0.0", "--port", mcp_port],
+            cwd=str(Path(__file__).resolve().parents[2]),  # project root
+            env={**os.environ, "PYTHONPATH": f".:{os.environ.get('PYTHONPATH', '')}"},
+            stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+        )
+        logging.getLogger("watson").info("mcp_server_started", extra={"port": mcp_port, "pid": proc.pid})
+    except Exception as e:
+        logging.getLogger("watson").warning("mcp_server_start_failed: %s", e)
+
+_start_mcp_server()
+
+# ── Env loading ──────────────────────────────────────────────────
+
+def _load_env():
+    env_path = os.path.expanduser("~/.hermes/.env")
+    if not os.path.exists(env_path):
+        return
+    with open(env_path) as f:
+        for line in f:
+            if "=" in line and not line.startswith("#"):
+                k, v = line.strip().split("=", 1)
+                k, v = k.strip(), v.strip().strip('"').strip("'")
+                if k and v and k not in os.environ:
+                    os.environ[k] = v
+
+_load_env()
+
+# ── Enterprise middleware ─────────────────────────────────────────
+
+from watson.web.middleware import init_app, register_task
+
+init_app(app)  # Auth, rate limiting, structured logging, tracing, graceful shutdown
+
+logger = logging.getLogger("watson")
+
+# ── SSE helper (thread-safe) ─────────────────────────────────────
+
+class SSEManager:
+    """Per-client SSE event queues — thread-safe."""
+    def __init__(self):
+        self._queues: dict[str, asyncio.Queue] = {}
+        self._lock = threading.Lock()
+
+    def create(self, client_id: str) -> asyncio.Queue:
+        q = asyncio.Queue()
+        with self._lock:
+            self._queues[client_id] = q
+        return q
+
+    def send(self, client_id: str, event: str, data: dict):
+        with self._lock:
+            q = self._queues.get(client_id)
+        if q:
+            try:
+                q.put_nowait((event, data))
+            except asyncio.QueueFull:
+                pass
+
+    def remove(self, client_id: str):
+        with self._lock:
+            self._queues.pop(client_id, None)
+
+sse = SSEManager()
+
+# ── Models ───────────────────────────────────────────────────────
+
+class InvestigateRequest(BaseModel):
+    query: str
+    client_id: Optional[str] = None
+    image_path: Optional[str] = None
+    depth: int = 2
+    context: str = ""
+    mode: str = "deep_investigation"  # "background_check" | "due_diligence" | "deep_investigation"
+    publish_to_graph: bool = False   # Per-case consent: publish findings to community knowledge graph
+
+    @property
+    def safe_depth(self) -> int:
+        return max(1, min(self.depth, 5))  # Clamp 1-5
+
+class ChatRequest(BaseModel):
+    message: str
+    findings: list = []
+    history: list = []
+    last_query: str = ""
+
+# ── Routes ───────────────────────────────────────────────────────
+
+_NO_CACHE = {
+    "Cache-Control": "no-cache, no-store, must-revalidate",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    """Serve the React app (built to static/) or fall back to old HTML."""
+    index = STATIC_DIR / "index.html"
+    if index.exists():
+        return HTMLResponse(content=index.read_text(), headers=_NO_CACHE)
+    # Fallback to old template
+    path = TEMPLATES_DIR / "investigation-map.html"
+    if path.exists():
+        return HTMLResponse(content=path.read_text(), headers=_NO_CACHE)
+    return HTMLResponse("<h1>Watson — run <code>cd frontend && npm run build</code></h1>", status_code=404)
+
+@app.get("/chat", response_class=HTMLResponse)
+async def chat():
+    """Serve the React app at /chat too."""
+    return await root()
+    return HTMLResponse(content=path.read_text(), headers=_NO_CACHE)
+
+@app.get("/health")
+async def health():
+    """Health check with dependency verification."""
+    deps = {}
+    
+    # Check DeepSeek API
+    api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+    deps["deepseek_api"] = "configured" if api_key and api_key != "***" else "missing"
+    
+    # Check memory DB
+    try:
+        from watson.memory import memory as mem
+        stats = mem.stats()
+        deps["memory_db"] = {"status": "ok", "investigations": stats.get("investigations", 0)}
+    except Exception:
+        deps["memory_db"] = {"status": "degraded"}
+    
+    # Check knowledge graph
+    try:
+        from watson.neo4j_graph import NEO4J_AVAILABLE
+        deps["neo4j"] = "available" if NEO4J_AVAILABLE else "fallback_json"
+    except Exception:
+        deps["neo4j"] = "unknown"
+    
+    all_ok = all(
+        v not in ("missing",) and (isinstance(v, dict) and v.get("status") != "degraded") or isinstance(v, str) and v not in ("missing",)
+        for v in deps.values()
+    ) or True  # Don't fail health for missing configs in dev
+    
+    return {
+        "status": "ok",
+        "version": "1.0.0",
+        "server": "FastAPI/uvicorn",
+        "dependencies": deps,
+    }
+
+@app.get("/api/tools")
+async def api_tools():
+    return {
+        "total": 12,
+        "categories": [
+            {"category": "toolkit", "count": 1, "tools": [{"name": "osint-toolkit", "description": "338 OSINT investigation tools", "free": True}]},
+            {"category": "corporate", "count": 1, "tools": [{"name": "corporate-finance", "description": "Company registries", "free": True}]},
+            {"category": "websites", "count": 2, "tools": [{"name": "websites-domains", "description": "Domain investigation", "free": True}, {"name": "browser-automation", "description": "Headless browser", "free": True}]},
+            {"category": "social_media", "count": 1, "tools": [{"name": "social-media", "description": "Social media search", "free": True}]},
+            {"category": "people", "count": 2, "tools": [{"name": "people-search", "description": "Person lookup", "free": True}, {"name": "scraper", "description": "Wiki/OpenSanctions", "free": True}]},
+        ],
+    }
+
+# ── Agent Investigation ──────────────────────────────────────────
+
+@app.post("/api/agent/investigate")
+async def agent_investigate(req: InvestigateRequest):
+    """Start a Watson v1 investigation. Returns client_id for SSE stream."""
+    import gc
+    gc.collect()
+    
+    from src.watson.orchestration import get_engine
+    
+    client_id = f"agent-{uuid.uuid4().hex[:8]}"
+    q = sse.create(client_id)
+    
+    async def run():
+        def push(event_type, data):
+            sse.send(client_id, event_type, data)
+        try:
+            engine = get_engine()
+            # Register interrupt queue for interactive steering
+            engine.register_interrupt_queue(client_id)
+            result = await engine.investigate(
+                query=req.query,
+                focus=req.context,
+                on_event=push,
+                mode=req.mode,
+            )
+            
+            # Send final report event with markdown
+            sse.send(client_id, "report", {
+                "case_id": result["case_id"],
+                "findings_count": result["findings_count"],
+                "confirmed": result["confirmed_count"],
+                "verifiability": f"{result['verifiability_score']:.0%}",
+                "markdown": result.get("markdown", ""),
+                "published_to_graph": req.publish_to_graph,
+            })
+            
+            # ── Per-case consent: publish to community knowledge graph ──
+            if req.publish_to_graph and result.get("findings"):
+                try:
+                    from watson.graph import KnowledgeGraph
+                    g = KnowledgeGraph()
+                    published = 0
+                    for f in result["findings"]:
+                        if hasattr(f, 'tier') and f.tier in ("CONFIRMED", "PROBABLE"):
+                            entities = getattr(f, 'entities', [])
+                            if entities:
+                                for entity in entities:
+                                    g.upsert_entity(
+                                        type_=entity.get("type", "unknown"),
+                                        value=entity.get("value", str(entity)),
+                                        case_id=result["case_id"],
+                                        label=entity.get("label", "")[:200],
+                                    )
+                                    published += 1
+                    if published:
+                        logger.info("graph_published", extra={
+                            "case_id": result["case_id"],
+                            "entities": published,
+                            "consent": "per_case",
+                        })
+                except Exception as e:
+                    logger.warning("graph_publish_failed: %s", e)
+            
+            logger.info("investigation_complete", extra={
+                "client_id": client_id, "query": req.query[:80],
+                "findings": result["findings_count"],
+                "case": result["case_id"],
+            })
+        except Exception as e:
+            logger.error("investigation_failed", extra={
+                "client_id": client_id, "query": req.query[:80], "error": str(e),
+            })
+            sse.send(client_id, "error", {"message": str(e)})
+        finally:
+            await asyncio.sleep(0.5)
+            sse.send(client_id, "_close", {})
+            # Cleanup interrupt queue
+            from src.watson.orchestration import get_engine as _get_eng
+            _eng = _get_eng()
+            _eng.remove_interrupt_queue(client_id)
+    
+    task = asyncio.create_task(run())
+    register_task(task)
+    return {"client_id": client_id, "status": "started"}
+
+@app.get("/api/agent/stream/{client_id}")
+async def agent_stream(client_id: str):
+    """SSE stream for an investigation in progress."""
+    q = sse._queues.get(client_id)
+    if not q:
+        async def error_gen():
+            yield f"event: error\ndata: {json.dumps({'message': 'Stream not found'})}\n\n"
+            yield "event: done\ndata: {}\n\n"
+        return StreamingResponse(error_gen(), media_type="text/event-stream")
+    
+    async def generate():
+        try:
+            while True:
+                try:
+                    ev_type, ev_data = await asyncio.wait_for(q.get(), timeout=30.0)
+                    yield f"event: {ev_type}\ndata: {json.dumps(ev_data, default=str)}\n\n"
+                    if ev_type == "_close":
+                        break
+                except asyncio.TimeoutError:
+                    yield ": heartbeat\n\n"
+        finally:
+            sse.remove(client_id)
+    
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ── Interactive Investigation Steering ──────────────────────────
+
+class InterruptRequest(BaseModel):
+    action: str = "context"  # "context", "stop", "skip_phase"
+    text: str = ""
+
+@app.post("/api/agent/investigate/{client_id}/interrupt")
+async def agent_interrupt(client_id: str, req: InterruptRequest):
+    """Send a steering command to a running investigation."""
+    from src.watson.orchestration import get_engine
+    engine = get_engine()
+    ok = engine.send_interrupt(client_id, {"action": req.action, "text": req.text})
+    if ok:
+        return {"status": "sent", "client_id": client_id}
+    return JSONResponse(
+        status_code=404,
+        content={"status": "not_found", "message": f"No active investigation: {client_id}"}
+    )
+
+
+# ── Agent Chat with Tools (SSE) ──────────────────────────────────
+
+WATSON_SOUL = (
+    "You are Watson, an autonomous OSINT investigator.\n\n"
+    "ABSOLUTE RULES — VIOLATION MEANS FAILURE:\n"
+    "- NEVER fabricate specific identifiers: no invented SAR numbers, VINs, wallet addresses, "
+    "transaction hashes, case IDs, or document numbers.\n"
+    "- NEVER invent reports or documents you cannot link to a public URL.\n"
+    "- NEVER fabricate dollar amounts from inaccessible databases.\n"
+    "- MARK UNCERTAINTY: [CONFIRMED], [PLAUSIBLE BUT UNVERIFIED], [HYPOTHETICAL — NOT REAL].\n"
+    "- When OSINT data runs out, STOP and state the boundary.\n\n"
+    "CAPABILITIES: web_search, fetch_url, whois_lookup, dns_lookup, crt_sh_search, "
+    "wayback_machine, etherscan_lookup, opencorporates_search, news_search, "
+    "run_terminal_command, investigate_target.\n\n"
+    "TONE: Sharp, direct, evidence-based. Brief like an intelligence analyst.\n"
+    "Use bullet points. Cite sources. Flag gaps.\n\n"
+    "CRITICAL — AFTER EVERY ANSWER:\n"
+    "If the user has CURRENT FINDINGS from an active investigation, you MUST end your response "
+    "with a 'Follow-up leads' section suggesting 2-3 concrete next investigation steps based on:\n"
+    "- Entities discovered but not yet explored (domains, people, companies in the findings)\n"
+    "- Gaps in the evidence (missing WHOIS details, unverified registrars, unresearched nameservers)\n"
+    "- Cross-references that deserve deeper investigation\n"
+    "Format each lead as: '🔍 Investigate [entity/value] — [why it matters]'\n"
+    "This is mandatory — the investigation is incomplete without follow-up leads.\n"
+)
+
+@app.post("/api/agent/chat/stream")
+async def agent_chat_stream(req: ChatRequest):
+    """Streaming chat — delegates to investigation engine for chat-style queries."""
+    async def respond():
+        yield f"event: token\ndata: {json.dumps({'token': 'Chat mode coming soon. Use /api/agent/investigate for full OSINT investigations.'})}\n\n"
+        yield "event: done\ndata: {}\n\n"
+    return StreamingResponse(respond(), media_type="text/event-stream")
+
+# ── Agent Tools ──────────────────────────────────────────────────
+
+@app.get("/api/agent/detect-intent")
+async def detect_intent(msg: str = Query("", description="Message to classify")):
+    """Determine whether a message is an investigation request or a chat question.
+    Public endpoint — no auth required."""
+    msg = msg.strip()
+    if not msg:
+        return {"intent": "chat", "confidence": 1.0}
+    
+    # TECHNICAL TARGETS — clearly investigable, auto-dispatch
+    if re.search(r"\.(com|org|net|io|gov|edu|uk|de|fr|ru|cn|jp|ai|dev|onion)\b", msg, re.IGNORECASE):
+        return {"intent": "investigate", "confidence": 0.95, "reason": "domain_detected"}
+    if re.search(r"@[\w.-]+\.[a-z]{2,}", msg):
+        return {"intent": "investigate", "confidence": 0.95, "reason": "email_detected"}
+    if re.search(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", msg):
+        return {"intent": "investigate", "confidence": 0.95, "reason": "ip_detected"}
+    if re.search(r"0x[a-fA-F0-9]{40}", msg):
+        return {"intent": "investigate", "confidence": 0.95, "reason": "crypto_detected"}
+    
+    # EXPLICIT INVESTIGATION COMMANDS
+    if re.match(r"^(investigate|look\s+into|research|dig\s+into|check\s+out|find\s+everything\s+(?:about|on))\s+", msg, re.IGNORECASE):
+        return {"intent": "investigate", "confidence": 0.85, "reason": "explicit_command"}
+
+    # OSINT-INTENT PHRASES — these signal "investigate X", not a chat question.
+    # "Amazon due diligence", "background check on Acme", "Tesla controversies",
+    # "risks of investing in X", "Acme lawsuits/sanctions/scandal".
+    osint_intent = re.search(
+        r"(?i)\b(due\s+diligence|background\s+check|kyc|aml|"
+        r"controvers(?:y|ies)|lawsuit?s?|litigation|sanction(?:s|ed)?|"
+        r"scandal|fraud|investigation|red\s+flags?|reputation|"
+        r"risk\s+(?:assessment|profile|exposure)|adverse\s+media|"
+        r"compliance|regulatory\s+action|antitrust|wrongdoing)\b",
+        msg,
+    )
+    if osint_intent:
+        return {"intent": "investigate", "confidence": 0.88,
+                "reason": f"osint_intent:{osint_intent.group(1).lower()}"}
+    
+    # OSINT-QUESTION PATTERNS — questions that demand investigation, not chat.
+    # "What is the corporate structure of X", "Who owns Y", "How did Z become involved"
+    # These look like "what/who/how" questions but are OSINT targets.
+    osint_question = re.search(
+        r"(?i)\b("
+        r"corporate\s+structure|beneficial\s+owner(?:s|ship)?|"
+        r"who\s+owns?|who\s+controls?|"
+        r"ownership\s+(?:structure|chain|network)|"
+        r"shell\s+compan|subsidiary|parent\s+compan|"
+        r"supply\s+chain|shipping\s+(?:compan|fleet|network)|"
+        r"how\s+did\s+.+\s+become\s+involved|"
+        r"what\s+(?:companies|entities|firms)\s+(?:are|own|control|operate)"
+        r")\b",
+        msg,
+    )
+    if osint_question:
+        return {"intent": "investigate", "confidence": 0.82,
+                "reason": f"osint_question:{osint_question.group(1).lower()[:40]}"}
+
+    # CHAT PATTERNS — questions about knowledge, not OSINT targets
+    chat_patterns = [
+        r"^(what|who|where|when|why|how)\s+(is|are|was|were|do|does|did|can|could|would|should|shall|will|may|might)",
+        r"\?$",  # ends with question mark
+        r"^(tell|explain|describe|show|list|summarize|compare|define|elaborate)",
+        r"^(hello|hi|hey|help|thanks|thank|what's up|howdy)",
+        r"^(what|who|where|when|why|how)\s+(about|to|can|could|do)",
+        r"^(can|will|would)\s+you\s+(tell|explain|show|help|list)",
+        r"^(i\s+(?:have|need|want)\s+(?:a|some|to)\s+(?:question|ask|know|understand))",
+    ]
+    for pattern in chat_patterns:
+        if re.search(pattern, msg, re.IGNORECASE):
+            return {"intent": "chat", "confidence": 0.90, "reason": "conversational_pattern"}
+    
+    # ── LLM CLASSIFIER FALLBACK ──
+    # If none of the fast-path regexes matched, ask the LLM. This replaces
+    # the old "default to chat" which trapped investigable targets like
+    # "Area 51" and article headlines in a 5-turn conversation loop.
+    try:
+        from src.watson.orchestration.intent_classifier import classify_intent
+        from src.watson.orchestration.llm_config import call_llm
+
+        intent, confidence, reason = await classify_intent(msg, call_llm)
+        return {"intent": intent, "confidence": confidence, "reason": reason}
+    except Exception as e:
+        logger.warning("intent_classifier_error: %s", e)
+
+    # Absolute last resort — short non-question messages are probably targets
+    word_count = len(msg.split())
+    if "?" not in msg and word_count <= 15 and any(c.isalpha() for c in msg):
+        return {"intent": "investigate", "confidence": 0.50,
+                "reason": "fallback_short_topic"}
+    return {"intent": "chat", "confidence": 0.50, "reason": "fallback_ambiguous"}
+
+@app.post("/api/agent/terminal")
+async def agent_terminal(req: Request):
+    """Terminal command execution — admin key required, allowlist enforced."""
+    import subprocess
+    
+    # Admin auth is handled by middleware — if we get here, it passed
+    data = await req.json()
+    cmd = data.get("command", "").strip()
+    if not cmd:
+        return JSONResponse({"error": "No command"}, status_code=400)
+    
+    # Command allowlist — only safe OSINT tools
+    ALLOWED = {"whois", "dig", "nslookup", "curl", "wget", "traceroute", "ping",
+               "openssl", "python3", "git", "date", "echo", "cat", "head", "tail"}
+    cmd_root = cmd.split()[0].split("/")[-1] if cmd.split() else ""
+    if cmd_root not in ALLOWED and not cmd.startswith(("python3 -c", "git ", "curl ", "echo ")):
+        logger.warning("terminal_blocked", extra={"command": cmd[:100], "root": cmd_root})
+        return JSONResponse(
+            {"error": f"Command '{cmd_root}' not in allowlist. Allowed: {', '.join(sorted(ALLOWED))}"},
+            status_code=403,
+        )
+    
+    try:
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+        logger.info("terminal_executed", extra={"command": cmd[:100], "exit_code": result.returncode})
+        return {"stdout": result.stdout.strip()[:10000], "stderr": result.stderr.strip()[:5000], "exit_code": result.returncode}
+    except subprocess.TimeoutExpired:
+        return {"error": "Timed out (30s)", "exit_code": -1}
+    except Exception as e:
+        logger.error("terminal_failed", extra={"command": cmd[:100], "error": str(e)})
+        return {"error": str(e), "exit_code": -1}
+
+# ── Memory Endpoints ─────────────────────────────────────────────
+
+@app.get("/api/memory/search")
+async def memory_search(q: str = Query(...), limit: int = 10):
+    try:
+        from watson.memory import memory as mem
+        return {"results": mem.search(q, limit=limit)}
+    except Exception as e:
+        logger.warning("memory_search_failed", extra={"query": q[:100], "error": str(e)})
+        return {"results": []}
+
+@app.get("/api/memory/recent")
+async def memory_recent(limit: int = 20):
+    try:
+        from watson.memory import memory as mem
+        return {"investigations": mem.list_recent(limit=limit)}
+    except Exception as e:
+        logger.warning("memory_recent_failed", extra={"error": str(e)})
+        return {"investigations": []}
+
+@app.get("/api/memory/stats")
+async def memory_stats():
+    try:
+        from watson.memory import memory as mem
+        return mem.stats()
+    except Exception as e:
+        logger.warning("memory_stats_failed", extra={"error": str(e)})
+        return {"investigations": 0, "entities": 0, "findings": 0}
+
+# ── Scheduler ────────────────────────────────────────────────────
+
+@app.get("/api/scheduler/jobs")
+async def scheduler_list():
+    try:
+        from watson.core.scheduler import Scheduler
+        sched = Scheduler()
+        return {"jobs": sched.list_jobs(), "total": len(sched.list_jobs())}
+    except Exception as e:
+        logger.warning("scheduler_list_failed", extra={"error": str(e)})
+        return {"jobs": [], "total": 0}
+
+# ── Toolkit Registry ─────────────────────────────────────────────
+
+@app.get("/api/bellingcat/summary")
+async def bellingcat_summary():
+    try:
+        from watson.bellingcat_registry import BellingcatRegistry
+        reg = BellingcatRegistry()
+        return reg.summary()
+    except Exception as e:
+        logger.warning("bellingcat_summary_failed", extra={"error": str(e)})
+        return {"total_tools": 0, "categories": 0}
+
+# ── Intelligence Ledger ──────────────────────────────────────────
+
+@app.get("/api/ledger/stats")
+async def ledger_stats():
+    """Cross-case intelligence accumulation statistics."""
+    try:
+        from src.watson.ethics import get_ledger
+        ledger = get_ledger()
+        return ledger.get_stats()
+    except ImportError:
+        try:
+            from watson.ethics import get_ledger
+            ledger = get_ledger()
+            return ledger.get_stats()
+        except Exception:
+            return {"total_investigations": 0, "status": "ledger_unavailable"}
+
+@app.get("/api/ledger/entity")
+async def ledger_entity(q: str = Query(..., description="Entity to query")):
+    """Query prior intelligence on a specific entity."""
+    try:
+        from src.watson.ethics import get_ledger
+        ledger = get_ledger()
+        result = ledger.get_entity_intel(q)
+        if result:
+            return {"found": True, "entity": q, "intel": result}
+        return {"found": False, "entity": q}
+    except ImportError:
+        try:
+            from watson.ethics import get_ledger
+            ledger = get_ledger()
+            result = ledger.get_entity_intel(q)
+            return {"found": bool(result), "entity": q, "intel": result}
+        except Exception:
+            return {"found": False, "entity": q, "status": "ledger_unavailable"}
+
+# ── Orchestrator (multi-agent, enterprise) ─────────────────────────
+
+@app.post("/api/agent/orchestrate")
+async def agent_orchestrate(req: InvestigateRequest):
+    """Multi-turn investigation with persistence, retry, and adversarial resilience."""
+    import gc
+    gc.collect()
+
+    from src.watson.orchestration import get_engine
+    from src.watson.metrics import investigations_total, findings_total, findings_confirmed
+
+    engine = get_engine(max_hops=5)
+    client_id = f"orch-{uuid.uuid4().hex[:8]}"
+    q = sse.create(client_id)
+
+    async def run():
+        def push(event_type, data):
+            sse.send(client_id, event_type, data)
+        try:
+            inv = await engine.investigate(
+                query=req.query,
+                context=req.context or "",
+                on_event=push,
+                image_path=req.image_path or "",
+            )
+
+            findings_total.inc(inv.total_findings)
+            findings_confirmed.inc(inv.confirmed_count)
+
+            # Generate report
+            import json as _json
+            cross_refs = _json.loads(inv.cross_references) if inv.cross_references else []
+
+            sse.send(client_id, "report", {
+                "investigation_id": inv.investigation_id,
+                "status": inv.status.value,
+                "findings_count": inv.total_findings,
+                "hops": inv.total_hops,
+                "confirmed": inv.confirmed_count,
+                "cross_references": len(cross_refs),
+                "created_at": inv.created_at,
+            })
+            sse.send(client_id, "cross_references", {"patterns": cross_refs[:5]})
+
+            logger.info("orchestration_complete", extra={
+                "investigation_id": inv.investigation_id,
+                "query": req.query[:80],
+                "findings": inv.total_findings,
+                "hops": inv.total_hops,
+                "confirmed": inv.confirmed_count,
+            })
+        except Exception as e:
+            logger.error("orchestration_failed", extra={
+                "client_id": client_id, "query": req.query[:80], "error": str(e),
+            })
+            sse.send(client_id, "error", {"message": str(e)})
+        finally:
+            await asyncio.sleep(0.5)
+            sse.send(client_id, "_close", {})
+            # Cleanup interrupt queue
+            from src.watson.orchestration import get_engine as _get_eng
+            _eng = _get_eng()
+            _eng.remove_interrupt_queue(client_id)
+    
+    task = asyncio.create_task(run())
+    register_task(task)
+    return {"client_id": client_id, "status": "started", "mode": "multi-agent"}
+
+
+@app.get("/api/agent/agents")
+async def list_agents():
+    """List all available specialized agents with capabilities."""
+    from src.watson.agents import get_all_agents
+    agents = get_all_agents()
+    return {
+        "agents": [
+            {
+                "role": a.role.value,
+                "description": a.description,
+                "capabilities": a.capabilities,
+                "tool_count": a.tool_count,
+            }
+            for a in agents.values()
+        ],
+        "total": len(agents),
+    }
+
+
+# ── Legacy compat ────────────────────────────────────────────────
+
+@app.post("/api/chat")
+async def legacy_chat(req: ChatRequest):
+    """Legacy alias → forwards to streaming chat."""
+    return await agent_chat_stream(req)
+
+
+# ═══════════════════════════════════════════════════════════════
+# PHASE B — Auth, Exports, Search, Workspaces
+# ═══════════════════════════════════════════════════════════════
+
+# ── Auth ─────────────────────────────────────────────────────
+
+@app.post("/api/auth/register")
+async def auth_register(req: Request):
+    """Register a new workspace + admin user."""
+    body = await req.json()
+    email = body.get("email", "").strip()
+    workspace_name = body.get("workspace", "").strip()
+
+    if not email or "@" not in email:
+        return JSONResponse(status_code=400, content={"error": "Valid email required"})
+    if not workspace_name:
+        return JSONResponse(status_code=400, content={"error": "Workspace name required"})
+
+    try:
+        from src.watson.auth.store import get_auth_store
+        store = get_auth_store()
+        ws, user = store.create_workspace(workspace_name, email)
+        api_key = store.generate_api_key(user.user_id)
+        token = store.create_token(user)
+
+        return {
+            "user_id": user.user_id,
+            "workspace_id": ws.workspace_id,
+            "workspace_name": ws.name,
+            "api_key": api_key,
+            "token": token.token,
+            "expires_at": token.expires_at,
+        }
+    except Exception as e:
+        return JSONResponse(status_code=409, content={"error": str(e)})
+
+@app.post("/api/auth/login")
+async def auth_login(req: Request):
+    """Login with API key or email + workspace."""
+    body = await req.json()
+    api_key = body.get("api_key", "").strip()
+
+    try:
+        from src.watson.auth.store import get_auth_store
+        store = get_auth_store()
+
+        if api_key:
+            user = store.validate_api_key(api_key)
+        else:
+            email = body.get("email", "").strip()
+            workspace_id = body.get("workspace_id", "").strip()
+            user = store.get_user_by_email(email, workspace_id)
+
+        if not user:
+            return JSONResponse(status_code=401, content={"error": "Invalid credentials"})
+
+        token = store.create_token(user)
+        return {
+            "user_id": user.user_id,
+            "workspace_id": user.workspace_id,
+            "role": user.role.value,
+            "token": token.token,
+            "expires_at": token.expires_at,
+        }
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+# ── Workspaces ───────────────────────────────────────────────
+
+@app.get("/api/workspace/{workspace_id}")
+async def workspace_get(workspace_id: str, req: Request):
+    """Get workspace details."""
+    from src.watson.auth.store import get_auth_store
+    store = get_auth_store()
+    ws = store.get_workspace(workspace_id)
+    if not ws:
+        return JSONResponse(status_code=404, content={"error": "Workspace not found"})
+    users = store.list_users(workspace_id)
+    return {
+        "workspace": {
+            "id": ws.workspace_id, "name": ws.name,
+            "created_at": ws.created_at,
+        },
+        "users": [{"id": u.user_id, "email": u.email, "role": u.role.value} for u in users],
+    }
+
+
+# ── Exports ──────────────────────────────────────────────────
+
+class ExportRequest(BaseModel):
+    investigation_id: str
+    format: str = "json"  # json, stix, misp, pdf, markdown
+
+
+@app.post("/api/export")
+async def export_investigation(export: ExportRequest):
+    """Export investigation in requested format."""
+    from src.watson.persistence import get_store
+    from src.watson.exports import BellingcatReport
+
+    store = get_store()
+    inv, steps = store.get_full_investigation(export.investigation_id)
+    if inv is None:
+        return JSONResponse(status_code=404, content={"error": "Investigation not found"})
+
+    # Collect findings from all steps
+    all_findings = []
+    for s in steps:
+        if s.findings_json:
+            try:
+                all_findings.extend(json.loads(s.findings_json))
+            except json.JSONDecodeError:
+                pass
+
+    cross_refs = json.loads(inv.cross_references) if inv.cross_references else []
+
+    report = BellingcatReport(
+        query=inv.original_query,
+        investigation_id=inv.investigation_id,
+        target_type=inv.target_type,
+        target_value=inv.target_value,
+    )
+    report.add_findings(all_findings)
+    report.add_cross_references(cross_refs)
+    report.hops = inv.total_hops
+
+    # Save to cases directory
+    cases_dir = Path("cases/exports")
+    cases_dir.mkdir(parents=True, exist_ok=True)
+
+    fmt = export.format.lower()
+    if fmt == "json":
+        path = report.to_json(cases_dir / f"{inv.investigation_id}.json")
+    elif fmt == "stix":
+        path = report.to_stix(cases_dir / f"{inv.investigation_id}_stix.json")
+    elif fmt == "misp":
+        path = report.to_misp(cases_dir / f"{inv.investigation_id}_misp.json")
+    elif fmt == "pdf":
+        path = report.to_pdf(cases_dir / f"{inv.investigation_id}.pdf")
+    elif fmt == "markdown":
+        path = cases_dir / f"{inv.investigation_id}.md"
+        path.write_text(report.to_markdown())
+    else:
+        return JSONResponse(status_code=400, content={"error": f"Unknown format: {fmt}"})
+
+    return {
+        "format": fmt,
+        "path": str(path),
+        "size_bytes": path.stat().st_size if path.exists() else 0,
+        "findings": len(all_findings),
+        "verifiability": f"{report._verifiability():.0%}",
+    }
+
+
+# ── Search ───────────────────────────────────────────────────
+
+@app.get("/api/search")
+async def search_investigations(
+    q: str = Query("", description="Search query"),
+    agent: str = Query("", description="Filter by agent role"),
+    tier: str = Query("", description="Filter by evidence tier"),
+    limit: int = Query(20, description="Max results"),
+):
+    """Full-text search across all investigations."""
+    if not q:
+        return {"results": [], "total": 0, "query": q}
+
+    from src.watson.search import get_search
+    s = get_search()
+    results = s.search(q, limit=limit, agent_filter=agent, tier_filter=tier)
+
+    return {
+        "query": q,
+        "total": len(results),
+        "results": results,
+        "filters": {"agent": agent, "tier": tier},
+    }
+
+
+@app.get("/api/search/investigations")
+async def search_inv_list(
+    q: str = Query("", description="Search investigations"),
+    limit: int = Query(10),
+):
+    """Search investigation-level metadata."""
+    if not q:
+        return {"results": [], "total": 0}
+
+    from src.watson.search import get_search
+    s = get_search()
+    results = s.search_investigations(q, limit=limit)
+    return {"query": q, "total": len(results), "results": results}
+
+
+@app.get("/api/search/stats")
+async def search_stats():
+    """Get search index statistics."""
+    from src.watson.search import get_search
+    return get_search().get_stats()
+
+
+# ═══════════════════════════════════════════════════════════════
+# API Key Settings — user-managed keys for tools
+# ═══════════════════════════════════════════════════════════════
+
+from pydantic import BaseModel
+
+
+class SetKeyRequest(BaseModel):
+    slug: str
+    value: str
+
+
+class SaveRequest(BaseModel):
+    consent_publish: bool = False
+
+
+@app.post("/api/cases/{case_id}/save")
+async def save_case(case_id: str, req: SaveRequest = SaveRequest()):
+    """Save a pending investigation to disk + knowledge graph + optionally MCP."""
+    from src.watson.orchestration import get_engine
+    engine = get_engine()
+    
+    if not hasattr(engine, '_pending_reports') or case_id not in engine._pending_reports:
+        raise HTTPException(404, f"No pending report for case {case_id}. It may already be saved.")
+    
+    report = engine._pending_reports[case_id]
+    
+    # Save to disk
+    engine._save_case(report)
+    
+    # Update knowledge graph
+    engine._update_graph(report)
+    
+    # Remove from pending
+    del engine._pending_reports[case_id]
+    
+    # Publish to MCP only with explicit consent
+    published = False
+    if req.consent_publish:
+        _publish_to_mcp(report)
+        published = True
+    
+    return {
+        "case_id": case_id,
+        "target": report.query,
+        "findings": len(report.findings),
+        "verifiability": f"{report.verifiability_score:.0%}",
+        "status": "saved",
+        "published": published,
+    }
+
+
+def _publish_to_mcp(report):
+    """Publish case entities to the MCP knowledge graph server with full case data."""
+    try:
+        import httpx
+        entities = []
+        for f in report.findings:
+            if f.tier in ("CONFIRMED", "PROBABLE"):
+                entities.append({
+                    "value": f.title[:200],
+                    "type": "finding",
+                    "source": f.source_url or "",
+                    "tier": f.tier,
+                    "case_id": report.case_id,
+                })
+        if entities:
+            payload = {
+                "case_id": report.case_id,
+                "target": report.query,
+                "target_type": getattr(report, "target_type", "unknown"),
+                "findings_count": len(report.findings),
+                "confirmed_count": sum(1 for f in report.findings if f.tier == "CONFIRMED"),
+                "verifiability": f"{report.verifiability_score:.0%}",
+                "date": getattr(report, "timestamp", ""),
+                "entities": entities,
+            }
+            httpx.post(f"{MCP_SERVER_URL}/api/ingest", json=payload, timeout=10,
+                       headers={"X-API-Key": MCP_API_KEY} if MCP_API_KEY else {})
+    except Exception:
+        pass  # MCP server may not be running
+
+
+@app.post("/api/cases/{case_id}/publish")
+async def publish_case(case_id: str):
+    """Publish an already-saved case to the MCP community graph."""
+    from pathlib import Path
+    case_path = Path.home() / "watson-cases" / f"{case_id}.md"
+    if not case_path.exists():
+        raise HTTPException(404, f"Case {case_id} not found in archives")
+
+    # Reconstruct entities from the saved markdown
+    import re
+    text = case_path.read_text()
+    target = ""
+    target_type = ""
+    tm = re.search(r"\*\*Target:\*\*\s*(.+)", text)
+    ttm = re.search(r"\*\*Target Type:\*\*\s*(.+)", text)
+    fm = re.search(r"\*\*Findings:\*\*\s*(\d+)", text)
+    cm = re.search(r"(\d+)\s+CONFIRMED", text)
+    vm = re.search(r"\*\*Verifiability:\*\*\s*(.+)", text)
+    dm = re.search(r"\*\*Date:\*\*\s*(.+)", text)
+
+    if tm: target = tm.group(1).strip()
+    if ttm: target_type = ttm.group(1).strip()
+    findings_count = int(fm.group(1)) if fm else 0
+    confirmed_count = int(cm.group(1)) if cm else 0
+    verifiability = vm.group(1).strip() if vm else ""
+    date_str = dm.group(1).strip() if dm else ""
+
+    # Extract finding titles — format: "- 🟡 **Title** [TIER] (NN% confidence)"
+    entities = []
+    for line in text.splitlines():
+        line = line.strip()
+        # Match: "- **Title** [TIER]" or "- 🟡 **Title** [TIER]"
+        m = re.search(r"-\s*(?:[🟢🟡🟠🔴]\s*)?\*\*(.+?)\*\*\s*\[([A-Z]+)\]", line)
+        if m:
+            title = m.group(1).strip()
+            tier_raw = m.group(2)
+            tier = "CONFIRMED" if tier_raw == "PRIMARY" else "PROBABLE"
+            entities.append({
+                "value": title[:200],
+                "type": "finding",
+                "source": "",
+                "tier": tier,
+                "case_id": case_id,
+            })
+
+    if entities:
+        try:
+            import httpx
+            payload = {
+                "case_id": case_id,
+                "target": target,
+                "target_type": target_type,
+                "findings_count": findings_count,
+                "confirmed_count": confirmed_count,
+                "verifiability": verifiability,
+                "date": date_str,
+                "entities": entities,
+            }
+            resp = httpx.post(f"{MCP_SERVER_URL}/api/ingest", json=payload, timeout=10,
+                            headers={"X-API-Key": MCP_API_KEY} if MCP_API_KEY else {})
+            if resp.status_code == 200:
+                return {
+                    "status": "published",
+                    "case_id": case_id,
+                    "entities_published": len(entities),
+                    "data": resp.json(),
+                }
+            raise HTTPException(502, f"MCP server returned {resp.status_code}")
+        except httpx.ConnectError:
+            raise HTTPException(503, "MCP server not running on port 8776")
+    return {"status": "no_entities", "case_id": case_id}
+
+
+@app.get("/api/public/search")
+async def search_public_intel(q: str):
+    """Search the community knowledge graph for prior intelligence on a target."""
+    try:
+        import httpx
+        resp = httpx.get(f"{MCP_SERVER_URL}/api/search", params={"q": q, "limit": 10}, timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            return {
+                "query": q,
+                "results": data.get("results", []),
+                "count": data.get("count", 0),
+            }
+        return {"query": q, "results": [], "count": 0, "error": f"MCP returned {resp.status_code}"}
+    except Exception as e:
+        return {"query": q, "results": [], "count": 0, "mcp_offline": True}
+
+
+@app.get("/api/public/stats")
+async def public_intel_stats():
+    """Get community knowledge graph stats."""
+    try:
+        import httpx
+        resp = httpx.get(f"{MCP_SERVER_URL}/api/stats", timeout=5)
+        if resp.status_code == 200:
+            return resp.json()
+        return {"error": f"MCP returned {resp.status_code}"}
+    except Exception as e:
+        return {"error": str(e), "mcp_offline": True}
+
+
+@app.get("/api/cases")
+async def list_cases(limit: int = 20, offset: int = 0):
+    """List all saved investigation cases."""
+    from pathlib import Path
+    import re
+    
+    cases_dir = Path.home() / "watson-cases"
+    cases = []
+    for f in sorted(cases_dir.glob("CASE-*.md"), key=lambda x: x.stat().st_mtime, reverse=True):
+        if not f.name.startswith("CASE-"):
+            continue
+        text = f.read_text()
+        target = ""
+        target_type = ""
+        findings = 0
+        confirmed = 0
+        verifiability = ""
+        date_match = re.search(r"\*\*Date:\*\*\s*(.+)", text)
+        target_match = re.search(r"\*\*Target:\*\*\s*(.+)", text)
+        type_match = re.search(r"\*\*Target Type:\*\*\s*(.+)", text)
+        findings_match = re.search(r"\*\*Findings:\*\*\s*(\d+)", text)
+        confirmed_match = re.search(r"(\d+)\s+CONFIRMED", text)
+        verif_match = re.search(r"\*\*Verifiability:\*\*\s*(.+)", text)
+        
+        if target_match: target = target_match.group(1).strip()
+        if type_match: target_type = type_match.group(1).strip()
+        if findings_match: findings = int(findings_match.group(1))
+        if confirmed_match: confirmed = int(confirmed_match.group(1))
+        if verif_match: verifiability = verif_match.group(1).strip()
+        date_str = date_match.group(1).strip() if date_match else ""
+        
+        cases.append({
+            "id": f.stem,
+            "target": target,
+            "target_type": target_type,
+            "date": date_str,
+            "findings": findings,
+            "confirmed": confirmed,
+            "verifiability": verifiability,
+            "size": f.stat().st_size,
+        })
+    
+    return {
+        "cases": cases[offset:offset+limit],
+        "total": len(cases),
+    }
+
+
+@app.get("/api/cases/{case_id}")
+async def get_case(case_id: str):
+    """Get a specific case markdown."""
+    from pathlib import Path
+    case_path = Path.home() / "watson-cases" / f"{case_id}.md"
+    if case_path.exists():
+        from fastapi.responses import PlainTextResponse
+        return PlainTextResponse(case_path.read_text(), media_type="text/markdown")
+    raise HTTPException(404, f"Case {case_id} not found")
+
+
+@app.get("/api/settings/keys")
+async def get_api_keys():
+    """List all configurable API keys with their status (values masked)."""
+    from watson.api_keys import list_keys
+    return {"keys": list_keys()}
+
+
+@app.post("/api/settings/keys")
+async def set_api_key(req: SetKeyRequest):
+    """Save an API key for a tool."""
+    from watson.api_keys import set_key
+    set_key(req.slug, req.value)
+    return {"status": "ok", "slug": req.slug, "configured": bool(req.value)}
+
+
+@app.delete("/api/settings/keys/{slug}")
+async def delete_api_key(slug: str):
+    """Remove an API key."""
+    from watson.api_keys import delete_key
+    delete_key(slug)
+    return {"status": "ok", "slug": slug, "configured": False}

@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Watson runtime
+watson-cases/
+watson-graph/
+watson-graph-backups/
+.watson/
+
+# Environment / secrets
+.env
+*.pem
+api_keys.json
+
+# Node (frontend)
+node_modules/
+frontend/dist/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Mypy
+.mypy_cache/
+
+# Deployment
+*.log
+nohup.out

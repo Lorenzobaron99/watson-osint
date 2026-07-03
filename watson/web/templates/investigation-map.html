@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Watson — OSINT Investigation</title>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #141420;
+    --border: #1e1e32;
+    --text: #c8c8d4;
+    --dim: #666680;
+    --primary: #4da6ff;
+    --danger: #ff4d6a;
+    --warn: #ffa64d;
+    --ok: #4dff91;
+    --graph: #2a2a44;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: grid;
+    grid-template-rows: auto 1fr;
+    overflow: hidden;
+  }
+  /* Header */
+  header {
+    padding: 12px 20px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  header h1 { font-size: 18px; font-weight: 600; letter-spacing: 0.5px; }
+  header .status { font-size: 13px; color: var(--dim); margin-left: auto; }
+  header .status.active { color: var(--primary); }
+  header .status.done { color: var(--ok); }
+  /* Mode toggle */
+  .modes { display: flex; gap: 2px; }
+  .mode-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--dim);
+    padding: 4px 12px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .mode-btn:first-child { border-radius: 6px 0 0 6px; }
+  .mode-btn:last-child { border-radius: 0 6px 6px 0; }
+  .mode-btn.active { background: var(--primary); color: #000; border-color: var(--primary); }
+  .mode-btn:hover:not(.active) { color: var(--text); border-color: var(--dim); }
+  /* Main grid */
+  main {
+    display: grid;
+    grid-template-columns: 1fr 400px;
+    overflow: hidden;
+  }
+  /* Left panel — findings */
+  .findings-panel {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .input-area {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    gap: 8px;
+  }
+  .input-area input {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 14px;
+    outline: none;
+  }
+  .input-area input:focus { border-color: var(--primary); }
+  .input-area button {
+    background: var(--primary);
+    color: #000;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .input-area button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .feed {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+  }
+  /* Progress */
+  .progress-msg {
+    font-size: 13px;
+    color: var(--dim);
+    padding: 4px 0;
+    font-style: italic;
+  }
+  .progress-msg::before { content: '→ '; }
+  /* Finding card */
+  .finding {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin: 8px 0;
+  }
+  .finding .tier {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 4px;
+  }
+  .finding .tier.primary { color: var(--danger); }
+  .finding .tier.secondary { color: var(--warn); }
+  .finding .tier.tertiary { color: var(--dim); }
+  .finding h3 { font-size: 14px; margin: 4px 0; font-weight: 600; }
+  .finding p { font-size: 13px; line-height: 1.5; color: var(--dim); margin: 6px 0; }
+  .finding .url { font-size: 12px; color: var(--primary); word-break: break-all; }
+  .finding .url a { color: var(--primary); text-decoration: none; }
+  .finding .url a:hover { text-decoration: underline; }
+  /* Right panel — graph and brief */
+  .side-panel {
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .graph-section {
+    height: 300px;
+    border-bottom: 1px solid var(--border);
+    position: relative;
+  }
+  .graph-section canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+  .brief-section {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+  }
+  .brief-section h2 {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    color: var(--primary);
+  }
+  .risk-theme {
+    margin: 8px 0;
+    padding: 10px;
+    background: var(--bg);
+    border-radius: 6px;
+    border-left: 3px solid var(--border);
+  }
+  .risk-theme.high { border-left-color: var(--danger); }
+  .risk-theme.medium { border-left-color: var(--warn); }
+  .entity-item {
+    font-size: 12px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .entity-item .name { font-weight: 600; color: var(--text); }
+  .entity-item .role { color: var(--dim); font-size: 11px; }
+  /* Loading */
+  .loading { color: var(--primary); font-size: 13px; }
+  /* Responsive */
+  @media (max-width: 800px) {
+    main { grid-template-columns: 1fr; }
+    .side-panel { display: none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>🔍 Watson</h1>
+  <div class="modes" id="modes">
+    <button class="mode-btn active" data-mode="background_check" onclick="setMode('background_check', this)" title="30-60s: Identity, sanctions, PEP, social media">
+      ⚡ Quick Check
+    </button>
+    <button class="mode-btn" data-mode="due_diligence" onclick="setMode('due_diligence', this)" title="2-5 min: Business, employment, financial, media">
+      📋 Due Diligence
+    </button>
+    <button class="mode-btn" data-mode="deep_investigation" onclick="setMode('deep_investigation', this)" title="5-15 min: Full dossier — criminal, legal, financial deep dive across all languages">
+      🔬 Deep
+    </button>
+  </div>
+  <span class="status" id="status">Ready</span>
+</header>
+<main>
+  <div class="findings-panel">
+    <div class="input-area">
+      <input id="query" placeholder="Investigate a person, company, domain, email…" 
+             autofocus onkeydown="if(event.key==='Enter')investigate()">
+      <button id="go" onclick="investigate()">Investigate</button>
+    </div>
+    <div class="feed" id="feed"></div>
+  </div>
+  <div class="side-panel">
+    <div class="graph-section">
+      <canvas id="graph"></canvas>
+    </div>
+    <div class="brief-section" id="brief"></div>
+  </div>
+</main>
+<script>
+const feed = document.getElementById('feed');
+const statusEl = document.getElementById('status');
+const goBtn = document.getElementById('go');
+const queryEl = document.getElementById('query');
+const briefEl = document.getElementById('brief');
+let investigating = false;
+let currentMode = 'background_check';
+
+function addMsg(html) {
+  feed.innerHTML += html;
+  feed.scrollTop = feed.scrollHeight;
+}
+
+function setMode(mode, btn) {
+  currentMode = mode;
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+function investigate() {
+  const q = queryEl.value.trim();
+  if (!q || investigating) return;
+  
+  investigating = true;
+  goBtn.disabled = true;
+  statusEl.textContent = 'Investigating…';
+  statusEl.className = 'status active';
+  feed.innerHTML = '';
+  briefEl.innerHTML = '';
+  
+  fetch('/api/agent/investigate', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({query: q, context: '', depth: 2, mode: currentMode})
+  }).then(r => r.json()).then(data => {
+    streamSSE(data.client_id);
+  }).catch(e => {
+    addMsg(`<div class="progress-msg">Error: ${e}</div>`);
+    finish();
+  });
+}
+
+function streamSSE(clientId) {
+  const es = new EventSource(`/api/agent/stream/${clientId}`);
+  
+  es.addEventListener('progress', e => {
+    const d = JSON.parse(e.data);
+    addMsg(`<div class="progress-msg">${esc(d.message || '')}</div>`);
+  });
+  
+  es.addEventListener('phase_start', e => {
+    const d = JSON.parse(e.data);
+    addMsg(`<div style="margin:12px 0 4px;font-size:13px;font-weight:600;color:var(--primary);border-top:1px solid var(--border);padding-top:8px">${esc(d.label || d.phase || '')}</div>`);
+  });
+  
+  es.addEventListener('phase_done', e => {
+    const d = JSON.parse(e.data);
+    if (d.finding_count > 0) {
+      addMsg(`<div class="progress-msg" style="color:var(--ok)">Phase complete — ${d.finding_count} findings</div>`);
+    }
+  });
+  
+  es.addEventListener('target_profile', e => {
+    const d = JSON.parse(e.data);
+    let html = `<div style="margin:8px 0;padding:10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">`;
+    html += `<div style="font-size:12px;color:var(--dim);margin-bottom:4px">TARGET PROFILE</div>`;
+    html += `<div style="font-size:14px;font-weight:600">${esc(d.target_type || 'unknown').toUpperCase()} — ${esc(d.primary_name || '')}</div>`;
+    if (d.wikidata_label) html += `<div style="font-size:12px;color:var(--dim)">${esc(d.wikidata_label)}: ${esc(d.wikidata_description || '')}</div>`;
+    if (d.associated_orgs && d.associated_orgs.length) html += `<div style="font-size:12px;color:var(--dim)">Orgs: ${d.associated_orgs.map(esc).join(', ')}</div>`;
+    if (d.social_handles && d.social_handles.length) html += `<div style="font-size:12px;color:var(--dim)">Social: ${d.social_handles.map(esc).join(', ')}</div>`;
+    html += `</div>`;
+    addMsg(html);
+  });
+  
+  es.addEventListener('entity_resolution', e => {
+    const d = JSON.parse(e.data);
+    if (d.entities && d.entities.length) {
+      let html = `<div style="margin:8px 0;padding:8px;background:var(--surface);border-radius:6px">`;
+      html += `<div style="font-size:12px;color:var(--dim);margin-bottom:4px">ENTITY RESOLUTION (${d.total} entities)</div>`;
+      d.entities.slice(0, 5).forEach(ent => {
+        html += `<div style="font-size:12px;color:var(--text)">• ${esc(ent.canonical)} [${ent.type}] — ${ent.tier} (${ent.source_count} sources)</div>`;
+      });
+      html += `</div>`;
+      addMsg(html);
+    }
+  });
+  
+  es.addEventListener('cross_reference', e => {
+    const d = JSON.parse(e.data);
+    if (d.patterns && d.patterns.length) {
+      let html = `<div style="margin:8px 0;padding:8px;background:var(--surface);border-radius:6px">`;
+      html += `<div style="font-size:12px;color:var(--dim);margin-bottom:4px">CROSS-REFERENCES (${d.total})</div>`;
+      d.patterns.slice(0, 5).forEach(p => {
+        if (p.type === 'entity_corroboration') {
+          html += `<div style="font-size:12px;color:var(--ok)">🔗 ${esc(p.entity)} — corroborated across sources</div>`;
+        } else if (p.type === 'adversarial_posture') {
+          html += `<div style="font-size:12px;color:var(--warn)">⚠ ${esc(p.agent)}: ${esc(p.failure_reason)}</div>`;
+        }
+      });
+      html += `</div>`;
+      addMsg(html);
+    }
+  });
+  
+  es.addEventListener('finding', e => {
+    const f = JSON.parse(e.data);
+    const tierClass = (f.source_tier || 'secondary').toLowerCase();
+    const tierLabel = f.tier || 'FINDING';
+    let html = `<div class="finding">`;
+    html += `<div class="tier ${tierClass}">${tierLabel} · ${f.source_tier || 'SOURCE'}</div>`;
+    html += `<h3>${esc(f.title || 'Untitled')}</h3>`;
+    if (f.description) html += `<p>${esc(f.description.substring(0, 500))}</p>`;
+    if (f.source_url) html += `<div class="url"><a href="${f.source_url}" target="_blank">${f.source_url}</a></div>`;
+    if (f.tool_name) html += `<div style="font-size:11px;color:var(--dim);margin-top:4px">via ${f.tool_name}</div>`;
+    html += `</div>`;
+    addMsg(html);
+  });
+  
+  es.addEventListener('brief', e => {
+    const b = JSON.parse(e.data);
+    let html = '<h2>Intelligence Brief</h2>';
+    if (b.executive_summary) {
+      html += `<p style="font-size:13px;line-height:1.5;color:var(--dim);margin-bottom:12px">${esc(b.executive_summary)}</p>`;
+    }
+    if (b.risk_themes && b.risk_themes.length) {
+      b.risk_themes.forEach(t => {
+        html += `<div class="risk-theme ${t.severity?.toLowerCase()}">`;
+        html += `<strong>${t.theme}</strong> <span style="color:var(--dim)">${t.severity}</span>`;
+        html += `<p style="font-size:12px;color:var(--dim);margin-top:4px">${esc(t.summary || '')}</p>`;
+        html += `</div>`;
+      });
+    }
+    if (b.notable_entities && b.notable_entities.length) {
+      html += '<div style="margin-top:12px"><strong style="font-size:13px">Notable Entities</strong></div>';
+      b.notable_entities.forEach(e => {
+        html += `<div class="entity-item"><span class="name">${esc(e.name)}</span> <span class="role">${esc(e.role)}</span></div>`;
+      });
+    }
+    briefEl.innerHTML = html;
+  });
+  
+  es.addEventListener('investigation_complete', e => {
+    const d = JSON.parse(e.data);
+    addMsg(`<div style="padding:12px;background:var(--surface);border-radius:8px;margin:8px 0;text-align:center">
+      <strong>✓ Investigation Complete</strong><br>
+      <span style="font-size:13px;color:var(--dim)">${d.total_findings} findings · ${d.confirmed} confirmed · ${d.verifiability} verifiability</span>
+    </div>`);
+    if (d.brief && d.brief.executive_summary) {
+      briefEl.innerHTML = `<h2>Intelligence Brief</h2><p style="font-size:13px;line-height:1.5;color:var(--dim)">${esc(d.brief.executive_summary)}</p>`;
+    }
+  });
+  
+  es.addEventListener('report', e => {
+    const d = JSON.parse(e.data);
+    if (d.markdown) {
+      addMsg(`<div style="margin:8px 0"><button onclick="downloadReport()" style="background:var(--surface);color:var(--primary);border:1px solid var(--border);padding:6px 14px;border-radius:6px;font-size:12px;cursor:pointer">📄 Download Report (.md)</button></div>`);
+      window._reportMarkdown = d.markdown;
+    }
+  });
+  
+  es.addEventListener('error', e => {
+    addMsg(`<div style="color:var(--danger);font-size:13px">${JSON.parse(e.data).message || 'Stream error'}</div>`);
+    es.close();
+    finish();
+  });
+  
+  es.addEventListener('_close', () => {
+    es.close();
+    finish();
+  });
+}
+
+function finish() {
+  investigating = false;
+  goBtn.disabled = false;
+  statusEl.textContent = 'Ready';
+  statusEl.className = 'status';
+}
+
+function downloadReport() {
+  if (!window._reportMarkdown) return;
+  const blob = new Blob([window._reportMarkdown], {type: 'text/markdown'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'watson-report.md';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function esc(s) {
+  if (!s) return '';
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// Initial examples
+addMsg(`<div style="padding:40px 20px;text-align:center">
+  <div style="font-size:48px;margin-bottom:12px">🔍</div>
+  <div style="color:var(--dim);font-size:14px">Enter a target to investigate</div>
+  <div style="color:var(--dim);font-size:12px;margin-top:8px">
+    Person · Company · Domain · Email · Crypto Wallet
+  </div>
+</div>`);
+</script>
+</body>
+</html>

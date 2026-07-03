@@ -1,0 +1,141 @@
+{
+  "case": "deepmind",
+  "exported_at": "2026-06-01T14:20:29.536483",
+  "report": {
+    "query": "Elon Musk",
+    "findings": 4,
+    "sources": 2,
+    "by_severity": {
+      "info": 4
+    },
+    "by_source": {
+      "people": 3,
+      "corporate": 1
+    },
+    "summary": "## Investigation Summary\n\n**Query:** Elon Musk\n**Findings:** 4 (4 direct, 0 cross-referenced)\n**Sources:** 2 tool categories\n**High-confidence findings:** 2\n\n### Top Findings\n- \ud83d\udfe2 **\ud83d\udcd6 Wikipedia: Elon Musk** (people) \u2014 Elon Reeve Musk ( / \u02c8 i\u02d0 l \u0252 n / EE -lon ; born June 28, 1971) is a businessman and former public official known for his\n- \ud83d\udfe2 **\ud83d\udea8 SANCTIONED: Elon Musk \u2014 OpenSanctions** (people) \u2014 Found 5 entries in OpenSanctions:\n- About OpenSanctions\n- Creative Commons 4.0 Attribution NonCommercial\n- Elon Musk\n- E\n- \ud83d\udfe1 **\ud83d\udc64 Person: Elon Musk** (people) \u2014 Searching for **Elon Musk** across public records and platforms:\n- [Google search](https://www.google.com/search?q=%22El\n- \ud83d\udfe1 **\ud83d\udd0d Entity search: Elon Musk** (corporate) \u2014 Searching corporate records and sanctions for **Elon Musk**:\n- [OpenCorporates](https://opencorporates.com/companies?q=E",
+    "generated_at": "2026-06-01T14:20:19.029127",
+    "findings_list": [
+      {
+        "id": "people-76d5f136",
+        "title": "\ud83d\udcd6 Wikipedia: Elon Musk",
+        "description": "Elon Reeve Musk ( / \u02c8 i\u02d0 l \u0252 n / EE -lon ; born June 28, 1971) is a businessman and former public official known for his leadership of Tesla and SpaceX . Musk has been the wealthiest person in the world since 2025; as of June 2026, [update] Forbes estimates his net worth to be US$834 billion.\n\n**Born:** Elon Reeve Musk ( 1971-06-28 ) June 28, 1971 (age 54) Pretoria , South Africa\n**Citizenship:** .mw-parser-output .plainlist ol,.mw-parser-output .plainlist ul{line-height:inherit;list-style:none;margin:0;padding:0}.\n**Education:** University of Pennsylvania ( BA , BS )\n**Occupations:** CEO and product architect of Tesla Founder, CEO, and chief engineer of SpaceX Founder and CEO of xAI Founder and CTO of \n**Political party:** Independent [ a ]\n**Spouses:** .mw-parser-output .marriage-line-margin2px{line-height:0;margin-bottom:-2px}.mw-parser-output .marriage-line-margin3px{l\n**Children:** 14, [ b ] including Vivian Wilson\n**Parents:** Errol Musk (father) Maye Musk (mother)\n**Relatives:** Musk family\n**Awards:** Full list",
+        "source": "people",
+        "tool": "scraper",
+        "severity": "info",
+        "confidence": 0.9,
+        "evidence": [
+          "https://en.wikipedia.org/wiki/Elon_Musk"
+        ]
+      },
+      {
+        "id": "people-e9c8f8d2",
+        "title": "\ud83d\udea8 SANCTIONED: Elon Musk \u2014 OpenSanctions",
+        "description": "Found 5 entries in OpenSanctions:\n- About OpenSanctions\n- Creative Commons 4.0 Attribution NonCommercial\n- Elon Musk\n- Elon Musk Revocable Trust\n- Alexandra Musk",
+        "source": "people",
+        "tool": "scraper",
+        "severity": "info",
+        "confidence": 0.9,
+        "evidence": [
+          "https://www.opensanctions.org/search/?q=Elon%20Musk"
+        ]
+      },
+      {
+        "id": "people-5abf30d8",
+        "title": "\ud83d\udc64 Person: Elon Musk",
+        "description": "Searching for **Elon Musk** across public records and platforms:\n- [Google search](https://www.google.com/search?q=%22Elon%20Musk%22)\n- [LinkedIn](https://www.linkedin.com/search/results/people/?keywords=Elon%20Musk)\n- [OpenSanctions](https://opensanctions.org/search/?q=Elon%20Musk)\n- [Wikipedia](https://en.wikipedia.org/wiki/Special:Search?search=Elon%20Musk)\n\nTo investigate further, try:\n`watson investigate \"Elon Musk email\"` for email breach check\n`watson investigate \"Elon Musk company\"` for corporate ties",
+        "source": "people",
+        "tool": "people-search",
+        "severity": "info",
+        "confidence": 0.5,
+        "evidence": [
+          "https://www.google.com/search?q=%22Elon%20Musk%22",
+          "https://www.linkedin.com/search/results/people/?keywords=Elon%20Musk",
+          "https://opensanctions.org/search/?q=Elon%20Musk"
+        ]
+      },
+      {
+        "id": "corporate-87ddcc61",
+        "title": "\ud83d\udd0d Entity search: Elon Musk",
+        "description": "Searching corporate records and sanctions for **Elon Musk**:\n- [OpenCorporates](https://opencorporates.com/companies?q=Elon%20Musk)\n- [OpenSanctions](https://opensanctions.org/search/?q=Elon%20Musk)\n- [Google](https://www.google.com/search?q=Elon%20Musk+company+sanctions)",
+        "source": "corporate",
+        "tool": "corporate-finance",
+        "severity": "info",
+        "confidence": 0.5,
+        "evidence": [
+          "https://opencorporates.com/companies?q=Elon%20Musk",
+          "https://opensanctions.org/search/?q=Elon%20Musk"
+        ]
+      }
+    ],
+    "cross_references": [],
+    "tool_stats": {
+      "websites-domains": {
+        "status": "empty",
+        "finding_count": 0,
+        "findings": []
+      },
+      "people-search": {
+        "status": "success",
+        "finding_count": 1,
+        "findings": [
+          {
+            "title": "\ud83d\udc64 Person: Elon Musk",
+            "severity": "info",
+            "confidence": 0.5,
+            "description": "Searching for **Elon Musk** across public records and platforms:\n- [Google search](https://www.google.com/search?q=%22Elon%20Musk%22)\n- [LinkedIn](https://www.linkedin.com/search/results/people/?keywo",
+            "evidence": [
+              "https://www.google.com/search?q=%22Elon%20Musk%22",
+              "https://www.linkedin.com/search/results/people/?keywords=Elon%20Musk",
+              "https://opensanctions.org/search/?q=Elon%20Musk"
+            ]
+          }
+        ]
+      },
+      "scraper": {
+        "status": "success",
+        "finding_count": 2,
+        "findings": [
+          {
+            "title": "\ud83d\udcd6 Wikipedia: Elon Musk",
+            "severity": "info",
+            "confidence": 0.9,
+            "description": "Elon Reeve Musk ( / \u02c8 i\u02d0 l \u0252 n / EE -lon ; born June 28, 1971) is a businessman and former public official known for his leadership of Tesla and SpaceX . Musk has been the wealthiest person in the wor",
+            "evidence": [
+              "https://en.wikipedia.org/wiki/Elon_Musk"
+            ]
+          },
+          {
+            "title": "\ud83d\udea8 SANCTIONED: Elon Musk \u2014 OpenSanctions",
+            "severity": "info",
+            "confidence": 0.9,
+            "description": "Found 5 entries in OpenSanctions:\n- About OpenSanctions\n- Creative Commons 4.0 Attribution NonCommercial\n- Elon Musk\n- Elon Musk Revocable Trust\n- Alexandra Musk",
+            "evidence": [
+              "https://www.opensanctions.org/search/?q=Elon%20Musk"
+            ]
+          }
+        ]
+      },
+      "corporate-finance": {
+        "status": "success",
+        "finding_count": 1,
+        "findings": [
+          {
+            "title": "\ud83d\udd0d Entity search: Elon Musk",
+            "severity": "info",
+            "confidence": 0.5,
+            "description": "Searching corporate records and sanctions for **Elon Musk**:\n- [OpenCorporates](https://opencorporates.com/companies?q=Elon%20Musk)\n- [OpenSanctions](https://opensanctions.org/search/?q=Elon%20Musk)\n-",
+            "evidence": [
+              "https://opencorporates.com/companies?q=Elon%20Musk",
+              "https://opensanctions.org/search/?q=Elon%20Musk"
+            ]
+          }
+        ]
+      },
+      "social-media": {
+        "status": "empty",
+        "finding_count": 0,
+        "findings": []
+      }
+    }
+  }
+}

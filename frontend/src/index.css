@@ -1,0 +1,104 @@
+@import url('https://fonts.googleapis.com/css2?family=Courier+Prime:ital,wght@0,400;0,700;1,400;1,700&family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  
+  --font-body-sm: "Courier Prime", monospace;
+  --font-body-md: "Courier Prime", monospace;
+  --font-headline-lg: "Libre Caslon Text", serif;
+  --font-headline-md: "Libre Caslon Text", serif;
+  --font-label-caps: "JetBrains Mono", monospace;
+  --font-technical: "JetBrains Mono", monospace;
+
+  --color-primary: #e6c184;
+  --color-background-dark: #131313;
+  --color-surface-dark: #131313;
+  --color-surface-container: #20201f;
+  --color-surface-container-low: #1c1b1b;
+  --color-surface-container-high: #2a2a2a;
+  --color-surface-container-highest: #353535;
+  --color-outline: #9a8f81;
+  --color-outline-variant: #4e463a;
+  --color-primary-container: #c9a66b;
+  --color-on-primary-container: #533b09;
+  --color-secondary-container: #881e1c;
+  --color-on-secondary-container: #ff9990;
+  --color-on-surface: #e5e2e1;
+  --color-on-surface-variant: #d1c5b5;
+}
+
+/* Custom visual effects and styles */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #131313;
+}
+::-webkit-scrollbar-thumb {
+  background: #4e463a;
+  border-radius: 3px;
+}
+
+.tactile-paper {
+  background-image: url("https://www.transparenttextures.com/patterns/natural-paper.png");
+  background-color: #24221f;
+  border: 1px solid #4e463a;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -1px rgba(0, 0, 0, 0.3), inset 0 0 40px rgba(0,0,0,0.2);
+}
+
+.tactile-paper-light {
+  background-image: url("https://www.transparenttextures.com/patterns/natural-paper.png");
+  background-color: #dfd8cb;
+  border: 1px solid #9a8f81;
+  color: #1c1b1b;
+  box-shadow: 0 4px 10px -2px rgba(0, 0, 0, 0.6), inset 0 0 30px rgba(0,0,0,0.1);
+}
+
+.red-string {
+  stroke: #881e1c;
+  stroke-width: 2;
+  filter: drop-shadow(0px 2px 4px rgba(136, 30, 28, 0.7));
+  stroke-dasharray: 1000;
+  stroke-dashoffset: 1000;
+  animation: drawString 2s ease-out forwards, pulseString 4s ease-in-out infinite;
+}
+
+@keyframes drawString {
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes pulseString {
+  0%, 100% { opacity: 0.7; stroke-width: 2; }
+  50% { opacity: 1; stroke-width: 2.5; }
+}
+
+.floating-node {
+  animation: drift 12s ease-in-out infinite alternate;
+}
+
+@keyframes drift {
+  from { transform: translate(0, 0); }
+  to { transform: translate(6px, 10px); }
+}
+
+.mahogany-border {
+  border: 1px solid #4a2c2a;
+  box-shadow: inset 0 0 10px rgba(0,0,0,0.5);
+}
+
+.flicker {
+  animation: flickerGlow 2s infinite alternate;
+}
+
+@keyframes flickerGlow {
+  0%, 100% { opacity: 0.8; }
+  50% { opacity: 1; filter: drop-shadow(0 0 8px #e6c184); }
+}
+
+/* Material design symbol fallback styling */
+.v-icon {
+  font-family: monospace;
+}

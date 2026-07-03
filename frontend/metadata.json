@@ -1,0 +1,6 @@
+{
+  "name": "Watson OSINT: Enhanced Investigation",
+  "description": "An immersive, multi-screen Victorian-themed OSINT dashboard and AI deduction environment.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

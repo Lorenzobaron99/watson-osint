@@ -1,0 +1,479 @@
+"""
+Watson CLI — terminal interface for the OSINT investigation engine.
+
+Commands:
+  watson onboard     First-time setup wizard
+  watson config      Show/edit configuration
+  watson web         Start the web UI (FastAPI + React)
+  watson investigate Run a single investigation
+  watson graph       Show knowledge graph stats
+  watson chat        Interactive terminal chat
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import os
+import random
+import subprocess
+import sys
+from pathlib import Path
+
+# ANSI colors
+W = "\033[38;5;208m"  # amber
+B = "\033[1m"
+D = "\033[2m"
+G = "\033[32m"
+R = "\033[31m"
+Y = "\033[33m"
+C = "\033[36m"
+M = "\033[35m"  # magenta — for graph/MCP
+X = "\033[0m"
+
+VERSION = "1.0.0"
+CODENAME = "A Study in Scarlet"
+
+WATSON_BANNER = f"""
+{W}╔══════════════════════════════════════════════════════════════╗
+║                                                              ║
+║   {B}██╗    ██╗ █████╗ ████████╗███████╗ ██████╗ ███╗   ██╗{W}   ║
+║   {B}██║    ██║██╔══██╗╚══██╔══╝██╔════╝██╔═══██╗████╗  ██║{W}   ║
+║   {B}██║ █╗ ██║███████║   ██║   ███████╗██║   ██║██╔██╗ ██║{W}   ║
+║   {B}██║███╗██║██╔══██║   ██║   ╚════██║██║   ██║██║╚██╗██║{W}   ║
+║   {B}╚███╔███╔╝██║  ██║   ██║   ███████║╚██████╔╝██║ ╚████║{W}   ║
+║   {B} ╚══╝╚══╝ ╚═╝  ╚═╝   ╚═╝   ╚══════╝ ╚═════╝ ╚═╝  ╚═══╝{W}   ║
+║                                                              ║
+║   {D}{VERSION} · {CODENAME}{W}                                         ║
+║   {D}Multi-source OSINT. Graph-native. Community-powered.{W}          ║
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝{X}
+"""
+
+SHERLOCK_QUOTES = [
+    '"It is a capital mistake to theorize before one has data."',
+    '"The world is full of obvious things which nobody by any chance ever observes."',
+    '"There is nothing more deceptive than an obvious fact."',
+    '"You see, but you do not observe."',
+    '"Data! Data! Data! I can\'t make bricks without clay."',
+    '"When you have eliminated the impossible, whatever remains, however improbable, must be the truth."',
+    '"The little things are infinitely the most important."',
+    '"What one man can invent, another can discover."',
+    '"There is nothing more stimulating than a case where everything goes against you."',
+    '"I am not the law, but I represent justice so far as my feeble powers go."',
+]
+
+
+def _quote() -> str:
+    return f"{D}{random.choice(SHERLOCK_QUOTES)}{X}"
+
+
+def _config_dir() -> Path:
+    return Path.home() / ".watson"
+
+
+def _config_path() -> Path:
+    return _config_dir() / "config.json"
+
+
+def _load_config() -> dict:
+    if _config_path().exists():
+        return json.loads(_config_path().read_text())
+    return {}
+
+
+def _save_config(config: dict):
+    _config_dir().mkdir(exist_ok=True)
+    _config_path().write_text(json.dumps(config, indent=2))
+
+
+# ═══════════════════════════════════════════════════════════════════
+# ONBOARDING
+# ═══════════════════════════════════════════════════════════════════
+
+
+def cmd_onboard():
+    """First-time setup wizard — v1 'A Study in Scarlet'."""
+    print(WATSON_BANNER)
+    print(f"  {_quote()}")
+    print(f"\n{G}Welcome to Watson {VERSION} — {CODENAME}.{X}")
+    print(f"{D}Everything you need ships free. Premium features scale when you do.{X}\n")
+
+    existing = _load_config()
+    config = {
+        "agent": existing.get("agent", "direct"),
+        "api_key": existing.get("api_key", ""),
+        "api_base": existing.get("api_base", ""),
+        "model": existing.get("model", ""),
+        "cases_dir": existing.get("cases_dir", os.path.expanduser("~/watson-cases")),
+        "mcp_url": existing.get("mcp_url", "http://localhost:8700"),
+        "mcp_api_key": existing.get("mcp_api_key", ""),
+        "publish_to_mcp": existing.get("publish_to_mcp", False),
+        "paid_api_keys": existing.get("paid_api_keys", {}),
+    }
+
+    # ── Step 1: Engine ──
+    print(f"{Y}═══ Step 1/4: Choose Your Engine{X}\n")
+    print(f"  [1] {B}Direct LLM{X} — any OpenAI-compatible API (OpenAI, Anthropic, DeepSeek, Groq)")
+    print(f"       {D}Set WATSON_API_KEY env var or enter below. Works with any provider.{X}")
+    print(f"  [2] {B}Hermes Agent{X} — local, full toolset (web, browser, vision, terminal)")
+    print(f"       {D}Requires Hermes running locally. Best for autonomous investigations.{X}\n")
+    
+    default_choice = "1" if config["agent"] == "direct" else "2"
+    choice = input(f"  {G}Choice [{default_choice}]:{X} ").strip() or default_choice
+    config["agent"] = "direct" if choice == "1" else "hermes"
+
+    if config["agent"] == "direct":
+        print()
+        api_key = os.environ.get("WATSON_API_KEY", config.get("api_key", ""))
+        masked = f"{api_key[:8]}..." if len(api_key) > 8 else "(not set)"
+        print(f"  {D}API key (env WATSON_API_KEY): {masked}{X}")
+        key = input(f"  {Y}Enter or paste new key [skip to keep current]:{X} ").strip()
+        if key:
+            config["api_key"] = key
+        
+        base = input(f"  {Y}API base URL [https://api.openai.com/v1]:{X} ").strip()
+        if base:
+            config["api_base"] = base
+        elif config.get("api_base"):
+            pass  # keep existing
+        else:
+            config["api_base"] = "https://api.openai.com/v1"
+        
+        model = input(f"  {Y}Model [gpt-4o]:{X} ").strip() or config.get("model") or "gpt-4o"
+        config["model"] = model
+
+    # ── Step 2: OSINT API keys (optional) ──
+    print(f"\n{Y}═══ Step 2/4: OSINT API Keys {D}(optional — free tier works without any){X}\n")
+    print(f"  {D}Paid APIs unlock deeper investigations. All are optional.{X}")
+    print(f"  {D}Without any keys, Watson still uses 10+ free sources.{X}\n")
+
+    paid_keys = config.get("paid_api_keys", {})
+    apis = [
+        ("OpenSanctions", "opensanctions", "Sanctions, entities, corporate registry"),
+        ("VirusTotal", "virustotal", "Domain/IP reputation, malware analysis"),
+        ("OpenCorporates", "opencorporates", "Company registries worldwide"),
+        ("HIBP", "hibp", "Have I Been Pwned — breach data"),
+    ]
+    for name, slug, desc in apis:
+        current = paid_keys.get(slug, "")
+        status = f"{G}set{X}" if current else f"{D}not set{X}"
+        print(f"  [{name}] {desc} — {status}")
+        key = input(f"  {Y}  Key [skip]:{X} ").strip()
+        if key:
+            paid_keys[slug] = key
+    
+    config["paid_api_keys"] = paid_keys
+
+    # ── Step 3: Community Graph (MCP) ──
+    print(f"\n{Y}═══ Step 3/4: Community Graph{X}\n")
+    print(f"  {B}The Watson Knowledge Graph{X} connects investigations across users.")
+    print(f"  {D}When you publish a case, entities are shared so others can discover")
+    print(f"  {D}connections from your work — and you benefit from theirs.{X}\n")
+    print(f"  {D}By default, your graph is local to this machine. Nothing is shared")
+    print(f"  {D}unless you opt in per-investigation.{X}\n")
+
+    mcp_url = input(f"  {Y}MCP server URL [{config['mcp_url']}]:{X} ").strip()
+    if mcp_url:
+        config["mcp_url"] = mcp_url
+    
+    if "localhost" in config["mcp_url"] or "127.0.0.1" in config["mcp_url"]:
+        print(f"  {D}→ Local graph — your data stays on this machine.{X}")
+    else:
+        print(f"  {D}→ Remote graph at {config['mcp_url']} — cases publish to shared instance.{X}")
+        mcp_key = input(f"  {Y}MCP API key (for publishing):{X} ").strip()
+        if mcp_key:
+            config["mcp_api_key"] = mcp_key
+
+    # ── Step 4: Case storage ──
+    print(f"\n{Y}═══ Step 4/4: Case Storage{X}\n")
+    cases = input(f"  {Y}Case files directory [{config['cases_dir']}]:{X} ").strip()
+    if cases:
+        config["cases_dir"] = os.path.expanduser(cases)
+    Path(config["cases_dir"]).mkdir(parents=True, exist_ok=True)
+
+    # ── Save ──
+    _save_config(config)
+
+    print(f"\n{G}═══ Configuration Complete ═══{X}\n")
+    print(f"  Engine:     {B}{config['agent']}{X}")
+    print(f"  Model:      {D}{config.get('model','(hermes)')}{X}")
+    print(f"  Cases:      {D}{config['cases_dir']}{X}")
+    print(f"  Graph:      {D}{config['mcp_url']}{X}")
+    paid_count = sum(1 for v in config.get("paid_api_keys", {}).values() if v)
+    print(f"  Paid APIs:  {G if paid_count else D}{paid_count}/4 configured{X}")
+    print(f"\n  {_quote()}")
+    print(f"  {D}Next: {B}watson web{D} to start the interface{X}")
+    print(f"  {D}   or: {B}watson investigate \"Elon Musk\"{D} to run a case{X}")
+    print(f"  {D}   or: {B}watson graph{D} to explore the knowledge graph{X}\n")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# CONFIG
+# ═══════════════════════════════════════════════════════════════════
+
+
+def cmd_config(args):
+    """Show or update configuration."""
+    if not _config_path().exists():
+        print(f"{R}No config found. Run '{B}watson onboard{R}' first.{X}")
+        sys.exit(1)
+
+    config = _load_config()
+
+    if args.key and args.value:
+        # Nested keys: paid_api_keys.opensanctions
+        keys = args.key.split(".")
+        target = config
+        for k in keys[:-1]:
+            target = target.setdefault(k, {})
+        target[keys[-1]] = args.value
+        _save_config(config)
+        print(f"{G}✓ {args.key} = {args.value}{X}")
+        return
+
+    if args.key:
+        keys = args.key.split(".")
+        target = config
+        for k in keys:
+            target = target.get(k, {}) if isinstance(target, dict) else target
+        val = target if target != {} else f"{R}(not set){X}"
+        print(f"{args.key}: {val}")
+        return
+
+    # Show all
+    print(f"{B}Watson {VERSION} Configuration{X}\n")
+    for k, v in config.items():
+        if k in ("api_key", "mcp_api_key"):
+            masked = v[:8] + "..." if v else "(not set)"
+            print(f"  {C}{k}{X}: {masked}")
+        elif k == "paid_api_keys":
+            print(f"  {C}{k}{X}:")
+            for slug, key in v.items():
+                status = f"{G}●●●●{X}" if key else f"{D}(not set){X}"
+                print(f"    {slug}: {status}")
+        else:
+            print(f"  {C}{k}{X}: {v}")
+    print(f"\n  {D}Config file: {_config_path()}{X}")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# WEB
+# ═══════════════════════════════════════════════════════════════════
+
+
+def cmd_web(args):
+    """Start the web UI."""
+    if not _config_path().exists():
+        print(f"{Y}No config found — running onboarding first...{X}\n")
+        cmd_onboard()
+
+    config = _load_config()
+    project_root = Path(__file__).resolve().parent.parent
+    host = args.host or "0.0.0.0"
+    port = args.port or 8777
+
+    print(WATSON_BANNER)
+    print(f"  {_quote()}")
+    print(f"\n  {G}Starting Watson web interface...{X}")
+    print(f"  {D}http://{host}:{port}{X}")
+    
+    # Show graph status
+    mcp_url = config.get("mcp_url", "http://localhost:8700")
+    if "localhost" in mcp_url or "127.0.0.1" in mcp_url:
+        print(f"  {D}Graph: local (auto-started on port 8700){X}")
+    else:
+        print(f"  {D}Graph: {M}{mcp_url}{X}")
+    
+    print()
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = f"src:{project_root}:{env.get('PYTHONPATH', '')}"
+    env["WATSON_MCP_URL"] = mcp_url
+    if config.get("mcp_api_key"):
+        env["MCP_API_KEY"] = config["mcp_api_key"]
+
+    subprocess.run(
+        [
+            sys.executable, "-m", "uvicorn", "watson.web.app:app",
+            "--host", host, "--port", str(port),
+        ],
+        cwd=str(project_root),
+        env=env,
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════
+# GRAPH — show knowledge graph status
+# ═══════════════════════════════════════════════════════════════════
+
+
+def cmd_graph(args):
+    """Show knowledge graph stats and recent entities."""
+    config = _load_config()
+    mcp_url = config.get("mcp_url", "http://localhost:8700")
+    
+    print(f"{B}Watson Knowledge Graph{X}\n")
+    
+    try:
+        import httpx
+        resp = httpx.get(f"{mcp_url}/api/stats", timeout=5)
+        if resp.status_code == 200:
+            stats = resp.json()
+            print(f"  {G}Server:{X}    {mcp_url}")
+            print(f"  {G}Entities:{X}  {stats.get('entity_count', 0)}")
+            print(f"  {G}Relations:{X} {stats.get('relation_count', 0)}")
+            print(f"  {G}Cases:{X}     {stats.get('case_count', 0)}")
+            
+            types = stats.get("entity_types", {})
+            if types:
+                print(f"\n  {B}Entity types:{X}")
+                for t, count in sorted(types.items(), key=lambda x: -x[1]):
+                    print(f"    {t}: {count}")
+            
+            top = stats.get("top_entities", [])
+            if top:
+                print(f"\n  {B}Most-connected entities:{X}")
+                for e in top[:5]:
+                    print(f"    {e['value'][:60]} ({e['type']}) — {e['case_count']} cases")
+        else:
+            print(f"  {Y}Graph server returned {resp.status_code}{X}")
+    except Exception as e:
+        print(f"  {R}Graph not reachable at {mcp_url}{X}")
+        print(f"  {D}Start Watson with '{B}watson web{D}' to auto-start a local graph.{X}")
+        if "localhost" in mcp_url:
+            print(f"  {D}  or run: {B}uvicorn watson.mcp_server:mcp --port 8700{X}")
+    
+    print(f"\n  {D}MCP tools: watson_search, watson_traverse, watson_context, watson_case, watson_stats{X}")
+    print(f"  {D}Self-hosting: see SELF_HOSTING.md{X}")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# INVESTIGATE — CLI mode (for headless/scripted runs)
+# ═══════════════════════════════════════════════════════════════════
+
+
+def cmd_investigate(args):
+    """Run a single investigation from the terminal."""
+    if not args.query:
+        print(f"{R}Usage: watson investigate <target>{X}")
+        print(f"  Example: watson investigate \"Elon Musk\"")
+        print(f"  Target types: person, company, domain, email, IP, wallet")
+        sys.exit(1)
+
+    config = _load_config()
+    if not config:
+        print(f"{Y}No config found — running onboarding first...{X}\n")
+        cmd_onboard()
+        config = _load_config()
+
+    async def _run():
+        from src.watson.orchestration import get_engine
+
+        engine = get_engine()
+        query = args.query
+
+        print(WATSON_BANNER)
+        print(f"  {_quote()}")
+        print(f"\n{C}🔍 Investigating: {query}{X}\n")
+
+        def on_event(event_type, data):
+            if event_type == "progress":
+                msg = data.get("message", "")
+                print(f"  {D}{msg}{X}")
+            elif event_type == "finding":
+                title = data.get("title", "")[:120]
+                confidence = data.get("confidence", 0)
+                bar = "🟢" if confidence > 0.7 else "🟡" if confidence > 0.4 else "🔴"
+                print(f"  {bar} {title}")
+
+        result = await engine.investigate(
+            query=query,
+            focus="",
+            on_event=on_event,
+            mode="deep_investigation",
+        )
+        
+        print(f"\n{G}═══ Investigation Complete ═══{X}")
+        print(f"  Case:  {result['case_id']}")
+        print(f"  Findings: {result['findings_count']} ({result['confirmed_count']} confirmed)")
+        print(f"  Verifiability: {result['verifiability_score']:.0%}")
+        print(f"  Saved to: {config.get('cases_dir', '~/watson-cases')}")
+        print()
+
+    asyncio.run(_run())
+
+
+# ═══════════════════════════════════════════════════════════════════
+# CHAT
+# ═══════════════════════════════════════════════════════════════════
+
+
+def cmd_chat(args):
+    """Interactive terminal chat."""
+    print(WATSON_BANNER)
+    print(f"  {_quote()}")
+    print(f"\n{G}Terminal chat is available via the web interface.{X}")
+    print(f"  {D}Run {B}watson web{D} and open {C}http://localhost:8777{X}")
+    print(f"  {D}Or use {B}watson investigate \"<target>\"{D} for single investigations.{X}")
+    print(f"  {D}Or {B}watson graph{D} to explore the knowledge graph.{X}")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# ENTRY POINT
+# ═══════════════════════════════════════════════════════════════════
+
+
+def main_entry():
+    parser = argparse.ArgumentParser(
+        prog="watson",
+        description=f"Watson OSINT {VERSION} — {CODENAME}. Multi-source investigation engine.",
+    )
+    sub = parser.add_subparsers(dest="command", help="Command")
+
+    # onboard
+    sub.add_parser("onboard", help="First-time setup wizard")
+
+    # config
+    p_config = sub.add_parser("config", help="Show or update configuration")
+    p_config.add_argument("key", nargs="?", help="Config key to get/set (use dots for nested: paid_api_keys.opensanctions)")
+    p_config.add_argument("value", nargs="?", help="New value (omit to read)")
+
+    # web
+    p_web = sub.add_parser("web", help="Start the web interface")
+    p_web.add_argument("--host", help="Bind address (default: 0.0.0.0)")
+    p_web.add_argument("--port", type=int, help="Port (default: 8777)")
+
+    # investigate
+    p_inv = sub.add_parser("investigate", help="Run a single investigation")
+    p_inv.add_argument("query", nargs="?", help="Target: person, company, domain, email, IP, wallet")
+
+    # graph
+    p_graph = sub.add_parser("graph", help="Show knowledge graph stats and entities")
+
+    # chat
+    sub.add_parser("chat", help="Interactive terminal chat")
+
+    args = parser.parse_args()
+
+    if args.command == "onboard":
+        cmd_onboard()
+    elif args.command == "config":
+        cmd_config(args)
+    elif args.command == "web":
+        cmd_web(args)
+    elif args.command == "investigate":
+        cmd_investigate(args)
+    elif args.command == "graph":
+        cmd_graph(args)
+    elif args.command == "chat":
+        cmd_chat(args)
+    else:
+        print(WATSON_BANNER)
+        print(f"  {_quote()}\n")
+        parser.print_help()
+
+
+if __name__ == "__main__":
+    main_entry()

@@ -1,0 +1,222 @@
+{
+  "report_type": "OSINT Intelligence Brief",
+  "case": "sundar pichai",
+  "query": "sundar pichai",
+  "generated_at": "2026-06-01T15:08:35.461464",
+  "risk_assessment": {
+    "score": 1.5,
+    "level": "\ud83d\udfe2 LOW",
+    "justification": "Limited findings of concern. Routine monitoring sufficient."
+  },
+  "executive_summary": "Investigation of \"sundar pichai\" yielded 14 findings across 1 sources, including 0 high or critical items. Key areas of concern involve bellingcat. Review findings below for detailed analysis and recommended actions.",
+  "key_findings": [
+    {
+      "title": "Target Classified: Person",
+      "severity": "info",
+      "confidence": 0.9,
+      "source": "bellingcat",
+      "tool": "bellingcat-toolkit",
+      "analysis": "Selected 96 tools across 11 categories: People, Facebook, Instagram, Twitter/X, Tiktok, Other Platforms, Multiple Platforms, Facial Recognition, Reverse Image Search, Metadata, Archiving",
+      "evidence": []
+    },
+    {
+      "title": "Bellingcat Investigation Complete",
+      "severity": "info",
+      "confidence": 0.85,
+      "source": "bellingcat",
+      "tool": "bellingcat-toolkit",
+      "analysis": "Processed 12 tool interactions (3 API calls, 9 URL references) across 11 Bellingcat categories",
+      "evidence": []
+    },
+    {
+      "title": "Wikipedia: 10 Results",
+      "severity": "info",
+      "confidence": 0.7,
+      "source": "bellingcat",
+      "tool": "bellingcat-toolkit",
+      "analysis": "Found 10 result(s)\nTop results: Sundar Pichai; Google Gemini; Gemini (language model)",
+      "evidence": [
+        "https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=sundar%20pichai&format=json&srlimit=10"
+      ]
+    },
+    {
+      "title": "\ud83d\udd17 DeHashed",
+      "severity": "info",
+      "confidence": 0.5,
+      "source": "bellingcat",
+      "tool": "bellingcat-toolkit",
+      "analysis": "A platform that maintains a database of compromised credentials, with a newly-launched web domain registration search tool.",
+      "evidence": [
+        "https://dehashed.com/search?query=sundar%20pichai"
+      ]
+    },
+    {
+      "title": "\ud83d\udd17 Namechk",
+      "severity": "info",
+      "confidence": 0.5,
+      "source": "bellingcat",
+      "tool": "bellingcat-toolkit",
+      "analysis": "A username and domain search tool that checks on which platforms or domain a given username is registered.",
+      "evidence": [
+        "https://namechk.com/"
+      ]
+    },
+    {
+      "title": "\ud83d\udd17 FaceCheck.ID",
+      "severity": "info",
+      "confidence": 0.5,
+      "source": "bellingcat",
+      "tool": "bellingcat-toolkit",
+      "analysis": "A facial recognition search engine that tries to find photos of people that look similar to a person of interest.",
+      "evidence": [
+        "https://facecheck.id/"
+      ]
+    },
+    {
+      "title": "\ud83d\udd17 PimEyes",
+      "severity": "info",
+      "confidence": 0.5,
+      "source": "bellingcat",
+      "tool": "bellingcat-toolkit",
+      "analysis": "An AI-powered facial recognition reverse image search tool.",
+      "evidence": [
+        "https://pimeyes.com/en/search/sundar%20pichai"
+      ]
+    },
+    {
+      "title": "\ud83d\udd17 Google Lens",
+      "severity": "info",
+      "confidence": 0.5,
+      "source": "bellingcat",
+      "tool": "bellingcat-toolkit",
+      "analysis": "Google Lens is an image recognition tool which can be used to identify locations or objects in photographs.",
+      "evidence": [
+        "https://lens.google.com/uploadbyurl?url=sundar%20pichai"
+      ]
+    },
+    {
+      "title": "\ud83d\udd17 TinEye",
+      "severity": "info",
+      "confidence": 0.5,
+      "source": "bellingcat",
+      "tool": "bellingcat-toolkit",
+      "analysis": "TinEye is a search engine that allows the user to search using images (reverse image search).",
+      "evidence": [
+        "https://tineye.com/search?url=sundar%20pichai"
+      ]
+    },
+    {
+      "title": "\ud83d\udd17 Archive.today",
+      "severity": "info",
+      "confidence": 0.5,
+      "source": "bellingcat",
+      "tool": "bellingcat-toolkit",
+      "analysis": "Archive any webpage, including Facebook and search for archived pages.",
+      "evidence": [
+        "https://archive.today/?run=1&url=https://sundar%20pichai"
+      ]
+    },
+    {
+      "title": "\ud83d\udd17 Wayback Machine",
+      "severity": "info",
+      "confidence": 0.5,
+      "source": "bellingcat",
+      "tool": "bellingcat-toolkit",
+      "analysis": "The Internet Archive's Wayback Machine lets users view and archive web pages, aiding in historical research and digital preservation.",
+      "evidence": [
+        "https://web.archive.org/web/*/https://sundar%20pichai"
+      ]
+    },
+    {
+      "title": "Wikidata: 3 Results",
+      "severity": "info",
+      "confidence": 0.45,
+      "source": "bellingcat",
+      "tool": "bellingcat-toolkit",
+      "analysis": "Found 3 result(s)\nTop results: Sundar Pichai (Q3503829) \u2014 Indian-American business executive, CEO of Google LLC & Alphabet Inc.; The Vergecast - Sundar Pichai on managing Google through the pandemic (Q109501218) \u2014 episode of the Vergecast; Sundar Pichai: CEO of Google and Alphabet | Lex Fridman Podcast #471 (Q134721156) \u2014 ",
+      "evidence": [
+        "https://www.wikidata.org/w/api.php?action=wbsearchentities&search=sundar%20pichai&language=en&format=json&limit=10"
+      ]
+    },
+    {
+      "title": "ICIJ Offshore Leaks: No Results",
+      "severity": "info",
+      "confidence": 0.3,
+      "source": "bellingcat",
+      "tool": "bellingcat-toolkit",
+      "analysis": "No results found for query.",
+      "evidence": [
+        "https://offshoreleaks.icij.org/api/v1/search?q=sundar%20pichai"
+      ]
+    },
+    {
+      "title": "\ud83d\udccb 82 Additional Manual Tools",
+      "severity": "info",
+      "confidence": 0.3,
+      "source": "bellingcat",
+      "tool": "bellingcat-toolkit",
+      "analysis": "These free tools are relevant but require manual browser use:\n- [192.com](http://www.192.com/): Searching for someone's address in the UK, phone number and who they live with according to electora\n- [Blackbird](https://github.com/p1ngul1n0/blackbird): Check usernames and email addresses on websites and social networks\n- [DiscordLeaks](https://discordleaks.unicornriot.ninja/): Search hundreds of thousands of messages leaked from 290+ white-supremacist / nazi discord servers.\n- [Eniro](https://www.eniro.se/): Yellow Pages (Swedish Edition)\n- [FastPeopleSearch](http://fastpeoplesearch.com/): Mostly good for US.\n- [GetContact](https://www.getcontact.com/en/): Phonenumber ID app - draws from crowdsourced contactbooks\n- [Ghunt](https://github.com/mxrch/GHunt): A command line tool for obtaining information about Google accounts.\n- [Have I Been Pwned?](https://haveibeenpwned.com/): Does an email address appear in data breaches?\n- [Hitta.se](https://www.hitta.se/): Mapping service for Sweden\n- [Intelx.io](http://intelx.io/): Find user details in data breaches\n- [Leak-Lookup](https://leak-lookup.com/): An online tool that allows you to search across public data breaches to surface credentials that may\n- [Maigret](https://github.com/soxoj/maigret): Maigret is a Python script that retrieves user information by searching for usernames across various\n- [Bellingcat Name Variant Search](https://bellingcat.github.io/name-variant-search/): Quickly search many variants of a person's name on Google\n- [NeutrOSINT](https://github.com/Kr0wZ/NeutrOSINT): A tool for investigating Proton Mail addresses.\n- [NigeriaPhonebook](https://nigeriaphonebook.com/): Look up by name, state, and phone number. Last names are partially censored for free accounts.\n... and 67 more",
+      "evidence": []
+    }
+  ],
+  "entities": {
+    "people": [
+      "Additional Manual Tools These",
+      "Alphabet Inc",
+      "Been Pwned",
+      "Bellingcat Investigation Complete Processed",
+      "Bellingcat Name Variant Search",
+      "Facial Recognition",
+      "Google Gemini",
+      "Google Lens Google Lens",
+      "Lex Fridman Podcast",
+      "Multiple Platforms",
+      "No Results No",
+      "Offshore Leaks",
+      "Other Platforms",
+      "Person Selected",
+      "Proton Mail",
+      "Results Found",
+      "Reverse Image Search",
+      "Sundar Pichai",
+      "Swedish Edition",
+      "Target Classified",
+      "Wayback Machine",
+      "Yellow Pages"
+    ],
+    "domains": [
+      "192.com",
+      "Archive.today",
+      "Hitta.se",
+      "Intelx.io",
+      "bellingcat.github.io",
+      "discordleaks.unicornriot.ninja",
+      "fastpeoplesearch.com",
+      "github.com",
+      "haveibeenpwned.com",
+      "intelx.io",
+      "leak-lookup.com",
+      "nigeriaphonebook.com",
+      "www.192.com",
+      "www.eniro.se",
+      "www.getcontact.com",
+      "www.hitta.se"
+    ]
+  },
+  "connections": [],
+  "recommended_actions": [
+    "Archive all evidence URLs with timestamps for chain of custody",
+    "Schedule 7-day follow-up investigation to track changes"
+  ],
+  "investigation_metadata": {
+    "total_findings": 14,
+    "sources_used": 1,
+    "by_severity": {
+      "info": 14
+    },
+    "by_source": {
+      "bellingcat": 14
+    }
+  },
+  "ai_conclusion": "## Executive Conclusion\n\n### Key Assessment\nSundar Pichai is a high-profile public figure (CEO of Google and Alphabet) with extensive publicly available biographical data. No compromised credentials, offshore leaks, or sensitive personal information were identified in this investigation, consistent with his status as a well-known executive.\n\n### Critical Findings\n- **Public Profile Confirmed**: Wikipedia and Wikidata confirm Sundar Pichai\u2019s identity as CEO of Google LLC and Alphabet Inc., with 10 and 3 results respectively.\n- **No Breach Data Found**: DeHashed search returned no compromised credentials associated with the query.\n- **No Offshore Leaks**: ICIJ Offshore Leaks database returned zero results.\n- **Facial Recognition Tools Identified**: Multiple tools (FaceCheck.ID, PimEyes, Google Lens, TinEye) were referenced but require manual use; no automated matches were processed.\n- **Archiving Tools Available**: Wayback Machine and Archive.today links were generated but not executed automatically.\n\n### Risk Level\n**LOW** \u2014 No sensitive data, breaches, or leaks were discovered; the target is a public figure with extensive open-source information.\n\n### Recommended Actions\n1. **Manual Verification**: Use facial recognition tools (PimEyes, FaceCheck.ID) with a known photo of Sundar Pichai to check for unauthorized image usage.\n2. **Username Check**: Run Namechk manually to verify if any impersonation accounts exist across platforms.\n3. **Archive Review**: Check Wayback Machine and Archive.today for any archived pages that may contain unintended disclosures."
+}
