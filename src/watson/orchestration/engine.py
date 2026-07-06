@@ -304,7 +304,7 @@ class InvestigationReport:
 # ── Display sanitization regexes ────────────────────────────────
 
 # Strip [scraper], [people-search], [tool], [LinkedIn], [social] etc. from finding titles
-_TOOL_TAG_RE = re.compile(r'(?:^|\s)\[[^\]]+]\s*')
+_TOOL_TAG_RE = re.compile(r'\s*\[[a-z][a-z-]*\]\s*')
 # Strip LLM monologue / reasoning prefixes (case-insensitive)
 _LLM_MONOLOGUE_RE = re.compile(
     r'\b(?:We are asked|First, I need to parse|Let me analyze|I need to '
@@ -2056,6 +2056,25 @@ Examples:
             except Exception as e:
                 logger.warning("people_tool_failed: %s", e)
 
+            # ── Username enumeration: 40+ platforms (async, no API key needed) ──
+            try:
+                from ..tools.username_enum import UsernameEnumTool
+                enum_tool = UsernameEnumTool()
+                person_name = profile.primary_name or query
+                enum_query = person_name.replace(" ", "").lower()
+                enum_findings = await enum_tool.investigate(enum_query)
+                for rf in enum_findings:
+                    f = self._tool_finding_to_engine(rf, phase="surface")
+                    if f:
+                        tool_findings.append(f)
+                        sse.finding(f)
+                        sse.track_tool("username_enum", enum_query)
+                if enum_findings:
+                    sse.progress("surface",
+                        f"→ Username enumeration: {sum(1 for rf in enum_findings if 'accounts' in rf.title)} platform hits")
+            except Exception as e:
+                logger.warning("username_enum_failed: %s", e)
+
             # ── Social profile discovery (DDG): LinkedIn, Twitter, Instagram ──
             sse.progress("surface", "→ Social profile discovery…")
             try:
@@ -2407,6 +2426,40 @@ Examples:
                     )
             except Exception as e:
                 logger.warning("graph_email_investigate_failed: %s → %s", email_entity.value, e)
+
+            # ── Email registration check (holehe): check which services the email is registered on ──
+            try:
+                from holehe.core import Holehe
+                holehe = Holehe()
+                # Run holehe with a short timeout — only care about registered services
+                results = await holehe.check(email_entity.value, timeout=5)
+                registered = [r for r in results if r.get("exists")]
+                if registered:
+                    platforms = [r["name"] for r in registered[:15]]
+                    # Create finding
+                    from ..core.models import Finding as CoreFinding, FindingSource, FindingSeverity
+                    desc_lines = [f"- {p}" for p in platforms]
+                    rf = CoreFinding(
+                        id=f"holehe-{email_entity.value[:8]}",
+                        source=FindingSource.SOCIAL_MEDIA,
+                        tool="holehe",
+                        title=f"📧 {email_entity.value} is registered on {len(registered)} services",
+                        description="\n".join(desc_lines),
+                        evidence=[],
+                        confidence=0.7,
+                        severity=FindingSeverity.INFO,
+                        metadata={"email": email_entity.value, "platforms": platforms},
+                    )
+                    f = self._tool_finding_to_engine(rf, phase="graph_enrich")
+                    if f:
+                        extra_findings.append(f)
+                        sse.finding(f)
+                    sse.progress("surface",
+                        f"  → {email_entity.value} registered on {len(registered)} services")
+            except ImportError:
+                pass  # holehe not installed — skip gracefully
+            except Exception as e:
+                logger.warning("holehe_check_failed: %s → %s", email_entity.value, e)
 
         # 5. Convert graph discoveries to findings
         graph_findings = graph.to_findings(source_transform="graph_enrichment")
@@ -3442,7 +3495,7 @@ Examples:
                     f = self._tool_finding_to_engine(rf, phase="os_pivot")
                     if f:
                         # Tag as auto-pivot finding so synthesis knows this is structured data
-                        f.title = f"🔄 [auto-pivot] {f.title}"
+                        f.title = f"🔄 {f.title}"
                         pivot_findings.append(f)
                         sse.finding(f)
 
@@ -5622,6 +5675,15 @@ and confidence assessments. Follow the OUTPUT FORMAT specified above."""
                     real_type = self._classify_entity(raw_value, raw_type)
                     if real_type == "unknown":
                         continue
+                    
+                    # ── spaCy quality gate for person entities ──
+                    if real_type == "person":
+                        try:
+                            from .ner import _spacy_validate_person
+                            if not _spacy_validate_person(raw_value.strip()):
+                                continue
+                        except ImportError:
+                            pass  # ner module not available, accept classifier verdict
                     
                     label = entity.get("label", entity.get("name", raw_value))
                     e = g.add_entity(
