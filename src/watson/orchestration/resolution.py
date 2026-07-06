@@ -212,7 +212,18 @@ def _has_article_prefix(name: str) -> bool:
 
 
 def _extract_entities_from_text(text: str) -> list[tuple[str, str]]:
-    """Pull (value, type) entity candidates from text."""
+    """Pull (value, type) entity candidates from text using spaCy-validated NER.
+
+    Delegates to the spaCy hybrid NER module for high-precision extraction.
+    Falls back to regex if spaCy is unavailable.
+    """
+    try:
+        from .ner import extract_entities_from_text as _ner_extract
+        return _ner_extract(text)
+    except ImportError:
+        pass
+
+    # ── Regex fallback (legacy) ──
     out: list[tuple[str, str]] = []
     if not text:
         return out
