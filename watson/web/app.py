@@ -93,7 +93,7 @@ async def health():
     open_circuits = sum(1 for cb in _circuits.values() if cb.is_open)
     return {
         "status": "ok",
-        "version": "0.3.0-enterprise",
+        "version": "1.0.6",
         "investigations": stats,
         "caches": {k: {"size": v["size"], "hit_rate": f"{v.get('hits',0)/max(v.get('hits',0)+v.get('misses',1),1):.1%}"}
                    for k, v in cache_stats.items()},
