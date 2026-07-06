@@ -95,6 +95,7 @@ def _entity_has_digits(name: str) -> bool:
 
 # Noise phrases — things that should never become entities
 _NOISE_PHRASES = {
+    # Web chrome / navigation
     "Public Affairs", "Key Takeaways", "Not Found", "Contact Us",
     "Terms of Service", "Privacy Policy", "All Rights Reserved",
     "Learn More", "Read More", "Click Here", "Subscribe",
@@ -103,6 +104,28 @@ _NOISE_PHRASES = {
     "Advertisement", "Sponsored", "Cookie Policy", "Accept Cookies",
     "Log In", "Sign Up", "Join Facebook", "Instagram Lite",
     "Update Substack", "Contact Uploading", "User Agreement",
+    "About Us", "Contact Us", "Get Started", "Sign In",
+    "Press Esc", "Mini Series", "Tesla Gallery", "Tesla Download",
+    # YouTube/Google footer boilerplate
+    "How Lisa Bowman", "Leveraged Major Press", "About Press Copyright",
+    "Creators Advertise Developers", "Safety How", "Simplified Management",
+    "Wikipedia Sports", "Frappe Press With", "Press Esc",
+    # Scraped geography artifacts
+    "United States Discovered", "United States Connection",
+    "Canada Connection", "Canada Discovered",
+    "Japan Connection", "Japan Discovered",
+    "Germany Connection", "Germany Discovered",
+    "Australia Connection", "Australia Discovered",
+    "Brazil Connection", "Brazil Discovered",
+    # Service/tech names that aren't people
+    "Wayback Machine", "Confidence Assessment", "Service Identification",
+    # Article/section headers
+    "Executive Summary", "Key Findings", "Notable Entities",
+    "Evidence Gaps", "Recommended Next", "Source Appendix",
+    "Data Ethics", "Risk Themes", "Next Steps",
+    # Generic capitalized noun phrases
+    "New York", "Los Angeles", "San Francisco", "Hong Kong",
+    "United States", "United Kingdom", "South Africa", "Shibuya City",
 }
 
 # Bad tokens — if any token in an entity matches these, it's NOT a person.
@@ -127,6 +150,13 @@ _BAD_TOKENS = {
     # Web chrome words
     "cookie", "policy", "uploading", "join", "lite", "update",
     "contact", "agreement", "sign", "log",
+    # Footer boilerplate words (prevents "About Press Copyright", "Safety How", etc.)
+    "copyright", "creators", "advertise", "developers", "safety",
+    "leveraged", "simplified", "management", "frappe", "esc",
+    "how", "about", "press", "wikipedia", "sports",
+    "mini", "series", "gallery", "download",
+    # Scraped geo artifacts
+    "discovered", "connection",
     # LLM-generated garbage (observed from dark/gap phases)
     "arrested", "cartel", "super", "longman", "pronunciation",
     "dictionary", "pearson", "ransomware", "breach", "jail",
@@ -143,6 +173,9 @@ _BAD_TOKENS = {
     "charges", "conviction", "sentence", "sentencing", "remarks",
     "pleaded", "guilty", "court", "criminal", "legal",
     "victim", "murder", "organisation", "affiliation",
+    # ── More LLM/title fragment garbage ──
+    "schuste", "economist", "publisher", "benzinga", "motors",
+    "directors", "what", "call", "follow", "story", "inside",
 }
 
 # Article prefixes that disqualify person names
@@ -203,6 +236,32 @@ def _extract_entities_from_text(text: str) -> list[tuple[str, str]]:
         if _has_bad_token(val):
             continue
         if _is_organization_name(val):
+            continue
+        # Require at least one token to be a known first name OR proper surname pattern.
+        # This prevents "Book Review", "Board Members", "Fantastic Future" etc.
+        # from being classified as person entities.
+        tokens = val.split()
+        has_known_name = any(t in _PERSON_FIRST_NAMES for t in tokens)
+        # Also accept: tokens that look like surnames (capitalized, 3+ chars, not common words)
+        _COMMON_NOUNS = {"Book", "Review", "Board", "Members", "Professional", "Profile",
+                         "Future", "Biography", "Principal", "Shareholder", "Founder",
+                         "Director", "Officer", "President", "Manager", "Analyst",
+                         "Case", "Number", "Court", "District", "State", "County",
+                         "Country", "City", "Government", "Department", "Ministry",
+                         "Efficiency", "Technology", "Entrepreneur", "Chair", "Under",
+                         "After", "Before", "View", "Call", "What", "Your", "Our",
+                         "Alumni", "Note", "Lawsuit", "Compensation", "Fine", "Million",
+                         "Bestselling", "Fantastic", "Medium", "Shortform", "Books",
+                         # ── Title fragments misclassified as persons ──
+                         "Official", "Publisher", "Page", "Users", "Call", "Follow",
+                         "Story", "Schuste", "Inside", "Ultimate", "Ultimate",
+                         "Economist", "Benzinga", "York", "Times", "What",
+                         "Directors", "Motors", "Corp", "Inc", "LLC"}
+        looks_like_surname = any(
+            t[0].isupper() and len(t) >= 3 and t not in _COMMON_NOUNS
+            for t in tokens
+        )
+        if not (has_known_name or looks_like_surname):
             continue
         out.append((val, "person"))
 

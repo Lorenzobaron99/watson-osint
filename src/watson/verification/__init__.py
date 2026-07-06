@@ -41,8 +41,8 @@ For each finding, check:
 Respond with ONLY a JSON object. No markdown, no explanation outside the JSON."""
 
 _VERIFY_PROMPT = """Review these OSINT findings for quality. Return a JSON dict with:
-- "verifications": list of { "finding_id": str, "pass": bool, "adjusted_tier": str,
-  "verification_confidence": int (0-100), "issues": [str], "notes": str }
+- "verifications": list of {{ "finding_id": str, "pass": bool, "adjusted_tier": str,
+  "verification_confidence": int (0-100), "issues": [str], "notes": str }}
 
 Findings to verify:
 {findings_json}
@@ -159,25 +159,44 @@ class FindingVerifier:
 
     def _merge_results(self, findings_data: list[dict], parsed: dict) -> list[dict]:
         """Merge parsed verifications with original finding data."""
-        verifications = parsed.get("verifications", [])
-        if not verifications:
-            # No structured verifications — pass everything
+        if not isinstance(parsed, dict):
             return [{"finding_id": fd["id"], "pass": True, "verification_confidence": 50,
-                     "adjusted_tier": fd["tier"], "issues": [], "notes": "No verification data"}
-                    for fd in findings_data]
+                     "adjusted_tier": fd.get("tier", "UNVERIFIED"), "issues": [],
+                     "notes": "Verification parse error"} for fd in findings_data]
+        
+        verifications = parsed.get("verifications", [])
+        if not verifications or not isinstance(verifications, list):
+            return [{"finding_id": fd["id"], "pass": True, "verification_confidence": 50,
+                     "adjusted_tier": fd.get("tier", "UNVERIFIED"), "issues": [],
+                     "notes": "No verification data"} for fd in findings_data]
 
-        # Build lookup
-        vmap: dict[str, dict] = {v.get("finding_id", ""): v for v in verifications}
+        # Build lookup — normalize keys in case LLM adds spaces
+        vmap: dict[str, dict] = {}
+        for v in verifications:
+            if not isinstance(v, dict):
+                continue
+            # Normalize: strip spaces from all keys
+            normalized = {}
+            for k, val in v.items():
+                if isinstance(k, str):
+                    normalized[k.strip()] = val
+                else:
+                    normalized[k] = val
+            fid = normalized.get("finding_id", "")
+            if fid:
+                vmap[fid] = normalized
 
         results = []
         for fd in findings_data:
-            fid = fd["id"]
+            if not isinstance(fd, dict):
+                continue
+            fid = fd.get("id", "")
             v = vmap.get(fid, {})
             results.append({
                 "finding_id": fid,
                 "pass": v.get("pass", True),
                 "verification_confidence": v.get("verification_confidence", 50),
-                "adjusted_tier": v.get("adjusted_tier", fd["tier"]),
+                "adjusted_tier": v.get("adjusted_tier", fd.get("tier", "UNVERIFIED")),
                 "issues": v.get("issues", []),
                 "notes": v.get("notes", ""),
             })

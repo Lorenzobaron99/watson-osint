@@ -41,8 +41,8 @@ For each finding, check:
 Respond with ONLY a JSON object. No markdown, no explanation outside the JSON."""
 
 _VERIFY_PROMPT = """Review these OSINT findings for quality. Return a JSON dict with:
-- "verifications": list of { "finding_id": str, "pass": bool, "adjusted_tier": str,
-  "verification_confidence": int (0-100), "issues": [str], "notes": str }
+- "verifications": list of {{ "finding_id": str, "pass": bool, "adjusted_tier": str,
+  "verification_confidence": int (0-100), "issues": [str], "notes": str }}
 
 Findings to verify:
 {findings_json}
@@ -168,8 +168,19 @@ class FindingVerifier:
                      "adjusted_tier": fd["tier"], "issues": [], "notes": "No verification data"}
                     for fd in findings_data]
 
-        # Build lookup
-        vmap: dict[str, dict] = {v.get("finding_id", ""): v for v in verifications}
+        # Build lookup — normalize keys from LLM (may have leading quotes/spaces)
+        vmap: dict[str, dict] = {}
+        for v in verifications:
+            if not isinstance(v, dict):
+                continue
+            # Normalize keys: strip quotes, spaces, and unicode junk
+            normalized = {}
+            for k, val in v.items():
+                clean_k = str(k).strip().strip('"').strip("'").strip()
+                normalized[clean_k] = val
+            fid = normalized.get("finding_id", "")
+            if fid:
+                vmap[fid] = normalized
 
         results = []
         for fd in findings_data:

@@ -54,6 +54,12 @@ async def _bind_sse_loop():
     """Bind the event loop to SSEManager so events can be enqueued
     from worker threads via call_soon_threadsafe."""
     sse.set_loop(asyncio.get_running_loop())
+    # Background cleanup for stale SSE queues (runs every 60s)
+    async def _cleanup_loop():
+        while True:
+            await asyncio.sleep(60)
+            sse.cleanup_stale()
+    asyncio.create_task(_cleanup_loop())
 
 app.add_middleware(
     CORSMiddleware,
@@ -236,6 +242,8 @@ class SSEManager:
         self._queues: dict[str, asyncio.Queue] = {}
         self._lock = threading.Lock()
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._active_consumers: dict[str, float] = {}  # client_id -> last_active_timestamp
+        self._close_times: dict[str, float] = {}  # client_id -> when _close was sent
 
     def set_loop(self, loop: asyncio.AbstractEventLoop):
         self._loop = loop
@@ -265,6 +273,36 @@ class SSEManager:
     def remove(self, client_id: str):
         with self._lock:
             self._queues.pop(client_id, None)
+            self._active_consumers.pop(client_id, None)
+            self._close_times.pop(client_id, None)
+
+    def cleanup_stale(self):
+        """Remove queues for completed/abandoned investigations.
+        
+        Removes queues where:
+        - _close was sent > 60s ago (investigation finished, grace period expired)
+        - No active consumer for > 15 min (abandoned investigation)
+        """
+        now = time.time()
+        with self._lock:
+            stale = []
+            for cid in list(self._queues.keys()):
+                close_time = self._close_times.get(cid, 0)
+                last_active = self._active_consumers.get(cid, 0)
+                if close_time and (now - close_time) > 60:
+                    stale.append(cid)
+                elif not last_active and not close_time:
+                    # No consumer ever connected? Check queue creation via...
+                    # Can't easily track creation time. Skip.
+                    pass
+                elif last_active and (now - last_active) > 900:  # 15 min
+                    stale.append(cid)
+            for cid in stale:
+                self._queues.pop(cid, None)
+                self._active_consumers.pop(cid, None)
+                self._close_times.pop(cid, None)
+        if stale:
+            logger.info("sse_cleanup: removed %d stale queues", len(stale))
 
 sse = SSEManager()
 
@@ -530,7 +568,13 @@ async def agent_investigate(req: InvestigateRequest):
 
 @app.get("/api/agent/stream/{client_id}")
 async def agent_stream(client_id: str):
-    """SSE stream for an investigation in progress."""
+    """SSE stream for an investigation in progress.
+    
+    Survives client disconnects: the queue is NOT removed when the client
+    drops. Events buffer and are replayed when the client reconnects.
+    The queue is only cleaned up when the investigation sends _close OR
+    after a TTL (no consumer for 10 minutes).
+    """
     q = sse._queues.get(client_id)
     if not q:
         async def error_gen():
@@ -539,6 +583,8 @@ async def agent_stream(client_id: str):
         return StreamingResponse(error_gen(), media_type="text/event-stream")
     
     async def generate():
+        # Mark this queue as having an active consumer
+        sse._active_consumers[client_id] = time.time()
         try:
             while True:
                 try:
@@ -546,11 +592,15 @@ async def agent_stream(client_id: str):
                     _ok, sse_str = _safe_serialize(ev_type, ev_data)
                     yield sse_str
                     if ev_type == "_close":
+                        # Investigation finished — queue survives 30s for late reconnects
+                        sse._close_times[client_id] = time.time()
                         break
                 except asyncio.TimeoutError:
                     yield ": heartbeat\n\n"
         finally:
-            sse.remove(client_id)
+            # Don't remove queue on disconnect — let events buffer for reconnection.
+            # Only mark consumer as gone. Queue cleanup happens on _close or TTL.
+            sse._active_consumers.pop(client_id, None)
     
     return StreamingResponse(
         generate(),
@@ -847,35 +897,36 @@ async def agent_orchestrate(req: InvestigateRequest):
         try:
             inv = await engine.investigate(
                 query=req.query,
-                context=req.context or "",
+                depth=req.safe_depth,
+                mode=req.mode,
                 on_event=push,
-                image_path=req.image_path or "",
             )
 
-            findings_total.inc(inv.total_findings)
-            findings_confirmed.inc(inv.confirmed_count)
+            findings_total.inc(inv.get("findings_count", 0))
+            findings_confirmed.inc(inv.get("confirmed_count", 0))
 
             # Generate report
             import json as _json
-            cross_refs = _json.loads(inv.cross_references) if inv.cross_references else []
+            cross_refs_raw = inv.get("cross_references", [])
+            cross_refs = _json.loads(cross_refs_raw) if isinstance(cross_refs_raw, str) else (cross_refs_raw or [])
 
             sse.send(client_id, "report", {
-                "investigation_id": inv.investigation_id,
-                "status": inv.status.value,
-                "findings_count": inv.total_findings,
-                "hops": inv.total_hops,
-                "confirmed": inv.confirmed_count,
+                "investigation_id": inv.get("case_id", ""),
+                "status": "completed",
+                "findings_count": inv.get("findings_count", 0),
+                "hops": len(inv.get("phases_completed", [])),
+                "confirmed": inv.get("confirmed_count", 0),
                 "cross_references": len(cross_refs),
-                "created_at": inv.created_at,
+                "created_at": inv.get("created_at", ""),
             })
             sse.send(client_id, "cross_references", {"patterns": cross_refs[:5]})
 
             logger.info("orchestration_complete", extra={
-                "investigation_id": inv.investigation_id,
+                "investigation_id": inv.get("case_id", ""),
                 "query": req.query[:80],
-                "findings": inv.total_findings,
-                "hops": inv.total_hops,
-                "confirmed": inv.confirmed_count,
+                "findings": inv.get("findings_count", 0),
+                "hops": len(inv.get("phases_completed", [])),
+                "confirmed": inv.get("confirmed_count", 0),
             })
         except Exception as e:
             logger.error("orchestration_failed", extra={

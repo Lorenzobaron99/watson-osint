@@ -525,15 +525,20 @@ def _fallback_brief(query: str, findings: list) -> dict:
                 entities_found[ent_type] = []
             entities_found[ent_type].append(str(ent_name)[:80])
     
-    # Build a real summary
+    # Build a real summary — strip tool tags like [scraper], [people-search]
+    import re as _re2
     confirmed = sum(1 for f in findings if getattr(f, "tier", "") == "CONFIRMED")
     total = len(findings)
     
+    # Strip tool tag prefixes from titles for cleaner summaries
+    def _clean_title(t: str) -> str:
+        return _re2.sub(r'^\[[^\]]+\]\s*', '', t).strip()
+    
     # Extract meaningful content from findings
-    people = entities_found.get("person", [])
-    orgs = entities_found.get("organization", [])
-    domains = entities_found.get("domain", [])
-    locations = entities_found.get("location", [])
+    people = [_clean_title(n) for n in entities_found.get("person", [])]
+    orgs = [_clean_title(n) for n in entities_found.get("organization", [])]
+    domains = [_clean_title(n) for n in entities_found.get("domain", [])]
+    locations = [_clean_title(n) for n in entities_found.get("location", [])]
     
     parts = [f"Investigation of '{query}' gathered {total} findings ({confirmed} confirmed) from {len(sources)} verified sources."]
     
@@ -546,7 +551,7 @@ def _fallback_brief(query: str, findings: list) -> dict:
     
     # If no entities found, use titles
     if not any([people, orgs, domains]):
-        top = [t for t in titles[:5] if not t.startswith("🔗")]
+        top = [_clean_title(t) for t in titles[:5] if not t.startswith("🔗")]
         if top:
             parts.append("Notable findings: " + "; ".join(top[:3]) + ".")
     
@@ -560,37 +565,65 @@ def _fallback_brief(query: str, findings: list) -> dict:
         "Financial": ["revenue", "profit", "loss", "billion", "million", "funding", "valuation",
                       "stock", "share", "investor", "ipo", "acquisition"],
         "Crime / Investigation": ["criminal", "arrest", "prison", "jail", "fraud", "money laundering",
-                                   "investigation", "probe", "allegation", "misconduct"],
-        "Infrastructure / Technical": ["dns", "ip address", "nameserver", "hosting", "cdn",
-                                        "subdomain", "resolves_to", "mx record"],
+                                   "investigation", "probe", "allegation", "misconduct", "wanted", "fugitive",
+                                   "fbi", "hacker", "cyber"],
     }
     themes = []
     all_text = " ".join(titles + [getattr(f, "description", "") or "" for f in findings]).lower()
     for theme, keywords in theme_keywords.items():
         matches = [kw for kw in keywords if kw in all_text]
+        # Require at least 2 keyword matches to trigger a theme — prevents
+        # a single accidental word match (e.g. "legal" in Instagram gossip)
+        # from creating a nonsensical "Regulatory/Legal" theme.
+        if len(matches) < 2:
+            continue
         if matches:
-            # Extract a relevant finding snippet
+            # Find the best finding for this theme — prefer ones with real descriptions
+            best_summary = f"Evidence of {matches[0]} found across multiple sources."
+            best_source = ""
             for f in findings:
-                desc = (getattr(f, "description", "") or "").lower()
+                desc = (getattr(f, "description", "") or "")
                 title_l = (getattr(f, "title", "") or "").lower()
                 for kw in matches:
-                    if kw in title_l or kw in desc:
-                        themes.append({
-                            "theme": theme,
-                            "severity": "HIGH" if theme.startswith("Crime") else "MEDIUM",
-                            "summary": getattr(f, "title", "")[:200] or f"Evidence of {kw} found",
-                            "source_titles": [getattr(f, "title", "")[:100]],
-                        })
+                    if kw in title_l or kw in desc.lower():
+                        # Use the description as summary (actual intelligence, not just title)
+                        if desc and len(desc) > 20:
+                            # Clean: strip tool tags, wiki markup, and normalize whitespace
+                            clean_desc = _clean_title(desc[:400])
+                            best_summary = ' '.join(clean_desc.split())
+                            best_source = getattr(f, "source_url", "") or ""
                         break
-                if any(t["theme"] == theme for t in themes):
+                if best_source:
                     break
-            else:
-                themes.append({
-                    "theme": theme,
-                    "severity": "MEDIUM",
-                    "summary": f"Keywords detected: {', '.join(matches[:4])}",
-                    "source_titles": [],
-                })
+            # ── Filter LLM meta-commentary from theme summaries ──
+            _llm_meta = [
+                "first, i need to parse", "i need to parse", "we are asked to",
+                "i need to start", "let me parse", "based on the provided",
+                "the user provided", "first i need to", "the wikipedia-style",
+                "i need to extract", "let me extract", "i will now",
+            ]
+            if best_summary and any(m in best_summary.lower() for m in _llm_meta):
+                # Replace with a clean summary from matching keywords
+                clean_parts = [kw.capitalize() for kw in matches[:3]]
+                best_summary = f"Evidence of {' and '.join(clean_parts)} found across multiple sources."
+                best_source = ""
+
+            themes.append({
+                "theme": theme,
+                "severity": "HIGH" if theme.startswith("Crime") else "MEDIUM",
+                "summary": best_summary,
+                "source_titles": [best_source] if best_source else [],
+            })
+    
+    # Deduplicate themes — same summary shouldn't appear for multiple themes
+    seen_summaries = set()
+    deduped_themes = []
+    for t in themes:
+        key = t["summary"][:50]
+        if key not in seen_summaries:
+            seen_summaries.add(key)
+            deduped_themes.append(t)
+    themes = deduped_themes[:5]
     
     # Extract timeline events from findings (dates in titles/descriptions)
     timeline_events: list[dict] = []
@@ -631,10 +664,16 @@ def _fallback_brief(query: str, findings: list) -> dict:
         "executive_summary": " ".join(parts),
         "risk_themes": themes if themes else [],
         "notable_entities": [
-            {"name": v[0][:80], "type": k, "role": "discovered", "confidence": 0.7}
-            for k, vals in entities_found.items() for v in vals[:1]
+            {"name": _clean_title(v)[:80], "type": k, "role": "discovered", "confidence": 0.7}
+            for k, vals in entities_found.items() for v in vals[:3]
+        ] if entities_found else [
+            {"name": _clean_title(t)[:80], "type": "finding", "role": "key finding", "confidence": 0.6}
+            for t in titles[:5] if t and not t.lower().startswith(("check_", "could not read"))
         ],
-        "timeline": timeline_events[:15],
+        "timeline": [
+            {**e, "event": _clean_title(e["event"])[:150], "source_title": _clean_title(e["source_title"])[:120]}
+            for e in timeline_events[:15]
+        ],
         "evidence_gaps": [],
         "recommended_next_steps": [{"entity": u, "action": "Review source", "tool_hint": "web"}
                                    for u in sources[:5]],

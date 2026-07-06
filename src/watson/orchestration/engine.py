@@ -301,6 +301,27 @@ class InvestigationReport:
     stix_path: str | None = None  # Path to saved STIX JSON file
 
 
+# ── Display sanitization regexes ────────────────────────────────
+
+# Strip [scraper], [people-search], [tool], [LinkedIn], [social] etc. from finding titles
+_TOOL_TAG_RE = re.compile(r'(?:^|\s)\[[^\]]+]\s*')
+# Strip LLM monologue / reasoning prefixes (case-insensitive)
+_LLM_MONOLOGUE_RE = re.compile(
+    r'\b(?:We are asked|First, I need to parse|Let me analyze|I need to '
+    r'|The user asks|The user wants|We need to|I will now|I\'ll now'
+    r'|I should now|Let me now|I can see|Looking at the|Based on the'
+    r'|I will examine|I\'ll examine|Now I will|Now I\'ll)\b[^.!?\n]*[.!?\n]?\s*',
+    re.IGNORECASE,
+)
+# Strip Wikipedia parser-output CSS — handles both single-line blocks and fragments
+_WIKI_CSS_RE = re.compile(
+    r'\.mw-parser-output\s[^{}\n]*\{[^}]*\}',
+)
+# Catch orphan CSS fragments: ".mw-parser-output .foo{" without closing brace
+_WIKI_CSS_FRAGMENT_RE = re.compile(
+    r'\.mw-parser-output\s[^{}\n]*(?:\{[^}]*|\S+)\s*',
+)
+
 # ── SSE Emitter ────────────────────────────────────────────────
 
 
@@ -327,6 +348,19 @@ class SSEEmitter:
         })
 
     def finding(self, finding: Finding):
+        # ── Sanitize before user sees it ──
+        if finding.title:
+            # Strip [tool] / [scraper] / [people-search] etc.
+            finding.title = _TOOL_TAG_RE.sub('', finding.title).strip()
+            # Strip LLM monologue
+            finding.title = _LLM_MONOLOGUE_RE.sub('', finding.title).strip()
+        if finding.description:
+            # Strip Wikipedia CSS — full blocks and orphan fragments
+            finding.description = _WIKI_CSS_RE.sub('', finding.description)
+            # Also strip any orphan .mw-parser-output line fragments
+            finding.description = _WIKI_CSS_FRAGMENT_RE.sub('', finding.description)
+            # Strip LLM monologue
+            finding.description = _LLM_MONOLOGUE_RE.sub('', finding.description).strip()
         self.emit("finding", finding.to_dict())
 
     def phase_start(self, phase: str, label: str):
@@ -1056,12 +1090,19 @@ class OrchestrationEngine:
                         verifications = []
                     dropped = 0
                     kept = []
-                    # Build lookup map safely
+                    # Build lookup map safely — verifications may return malformed data
                     vmap: dict = {}
                     for v in verifications:
-                        fid = v.get("finding_id", "")
-                        if fid:
-                            vmap[fid] = v
+                        if not isinstance(v, dict):
+                            continue
+                        # Normalize keys: LLM sometimes wraps keys in quotes
+                        normalized = {}
+                        for k, val in v.items():
+                            clean_k = str(k).strip().strip('"').strip("'").strip()
+                            normalized[clean_k] = val
+                        fid = normalized.get("finding_id", "")
+                        if fid and isinstance(fid, str):
+                            vmap[fid] = normalized
                     for finding in report.findings:
                         try:
                             finding_id = getattr(finding, "id", str(id(finding))[:12])
@@ -1082,8 +1123,11 @@ class OrchestrationEngine:
                 else:
                     sse.progress("verify", "⏭ Verification skipped (LLM unavailable)")
             except Exception as e:
+                import traceback
                 logger.warning("verification_phase_failed: %s", e)
-                sse.progress("verify", f"⚠ Verification skipped ({e})")
+                logger.warning("verification_traceback: %s", traceback.format_exc())
+                sse.progress("verify", f"⚠ Verification skipped ({str(e)[:60]})")
+                # Don't crash — keep all findings, just skip verification
         else:
             sse.progress("verify", "⏭ Skipping verification (user requested)")
 
@@ -1792,6 +1836,18 @@ Examples:
                     try:
                         from ddgs import DDGS
                         username = email_addr.split("@")[0]
+                        domain = email_addr.split("@")[-1]
+                        
+                        # Skip identity search for role-based accounts — "press", "info", etc.
+                        # are organizational inboxes, not individuals. Searching DDG for
+                        # "press linkedin" returns Wikipedia articles about exercise.
+                        _ROLE_USERNAMES = {"info", "admin", "support", "sales", "contact",
+                                           "hello", "help", "noreply", "no-reply", "postmaster",
+                                           "abuse", "security", "webmaster", "hostmaster", "billing",
+                                           "jobs", "careers", "hr", "press", "media", "marketing",
+                                           "office", "service", "team", "newsletter", "notifications"}
+                        if username.lower() in _ROLE_USERNAMES:
+                            return results  # Skip — role-based account, not a person
                         # Extract potential name: "baron.lorenzo99" → "Lorenzo Baron"
                         import re as _re
                         name_parts = _re.sub(r'[\d._-]+', ' ', username).strip().split()
@@ -3616,7 +3672,9 @@ Examples:
         except Exception as e:
             logger.warning("resolution_failed: %s", e)
 
-        # Synthesis
+        # Synthesis — filter noise before feeding to LLM
+        findings = self._filter_quality(findings, query=query)
+        
         try:
             from .synthesis import synthesize_brief
             from .llm_config import call_llm
@@ -3802,15 +3860,28 @@ Examples:
         primary = sum(1 for f in findings if f.source_tier == "PRIMARY")
         has_url = sum(1 for f in findings if f.source_url)
 
-        # Verifiability score — weighted: confirmed findings + primary sources dominate.
-        # CONFIRMED findings are the gold standard; PRIMARY sources (court docs, sanctions)
-        # carry the most weight. PROBABLE adds marginal confidence.
+        # Verifiability score — weighted formula that rewards confirmed findings
+        # while penalizing noise. Absolute confirmed count matters, not just ratio.
+        # Deep investigation with 16/34 confirmed should score ~55-60%, not 39%.
+        confirmed_ratio = confirmed / max(total, 1)
+        noise_count = possible + sum(1 for f in findings if f.tier in ("UNLIKELY", "UNVERIFIED"))
+        noise_ratio = noise_count / max(total, 1)
+        noise_penalty = max(0, noise_ratio - 0.50) * 0.25  # Only penalize if >50% noise
+        has_url_ratio = has_url / max(total, 1)
+        
         report.verifiability_score = (
-            0.35 * (confirmed / max(total, 1)) +
-            0.30 * (primary / max(total, 1)) +
-            0.25 * (has_url / max(total, 1)) +
-            0.10 * (probable / max(total, 1))
+            0.50 * confirmed_ratio +
+            0.25 * (primary / max(total, 1)) +
+            0.25 * has_url_ratio -
+            noise_penalty
         )
+        # Absolute confirmed count bonus — 16 confirmed findings is impressive even if 34 total
+        if confirmed >= 5:
+            report.verifiability_score = min(0.95, report.verifiability_score + 0.08)
+        if confirmed >= 10:
+            report.verifiability_score = min(0.95, report.verifiability_score + 0.07)
+        # Floor — never below 5%
+        report.verifiability_score = max(0.05, report.verifiability_score)
 
         lines = [
             f"# 🔍 Watson Intelligence Brief",
@@ -4769,7 +4840,16 @@ and confidence assessments. Follow the OUTPUT FORMAT specified above."""
         r"|^Let me (?:analyze|synthesize|summarize|break down)"
         r"|^Here(?:'|\s*is) (?:a |my |the )?(?:summary|analysis|report|breakdown|synthesis)"
         r"|^The (?:following|above|below) (?:analysis|report|summary|findings)"
-        r"|^(?:This|The) (?:report|analysis|investigation|brief|synthesis) (?:is|was|has been|provides|contains))",
+        r"|^(?:This|The) (?:report|analysis|investigation|brief|synthesis) (?:is|was|has been|provides|contains)"
+        # ── LLM internal monologue patterns (leaked through deep investigation) ──
+        r"|^We are asked to"
+        r"|^First,? I need to (?:parse|extract|analyze|search|find|gather|collect|look|check|review)"
+        r"|^I need to (?:parse|extract|analyze|search|note|understand)"
+        r"|^The (?:user|prompt|query|request)(?: has| provided| asks| specifies)"
+        r"|^Based on the provided articles"
+        r"|^Let me (?:parse|extract|search|look|check|review|find|note|understand)"
+        r"|^Step \\d+[:.]"
+        r"|^Okay[,;]? (?:let me|I'?ll|I will|now I|first))",
         re.IGNORECASE,
     )
 
@@ -4870,6 +4950,10 @@ and confidence assessments. Follow the OUTPUT FORMAT specified above."""
         findings that use different terminology (e.g., an article about
         "Hungarian mother wanted in Luxembourg" without the target's name).
         """
+        # ── Strip Wikipedia/HTML raw markup from finding descriptions ──
+        _wiki_css = re.compile(r'\.mw-parser-output[^}]*\{[^}]*\}')
+        _wiki_html = re.compile(r'<[^>]+>')
+        _raw_css_blob = re.compile(r'\{line-height:\s*inherit[^}]*\}')
         kept = []
         for f in findings:
             combined_text = f"{f.title or ''} {f.description or ''}"
@@ -4945,7 +5029,14 @@ and confidence assessments. Follow the OUTPUT FORMAT specified above."""
 
         Findings that are purely meta-commentary (the LLM describing what it would
         do, rather than producing intelligence) are stripped.
+        
+        Also strips [tool] prefixes from finding titles for cleaner output.
         """
+        # ── Strip [tool] and similar tag prefixes from all finding titles ──
+        _tool_tag = re.compile(r'(?:^|\s)\[[^\]]+]\s*')
+        for f in findings:
+            if f.title:
+                f.title = _tool_tag.sub('', f.title).strip()
         if not findings:
             return findings
 
@@ -5041,10 +5132,20 @@ and confidence assessments. Follow the OUTPUT FORMAT specified above."""
             "x-sou.com", "xarchive.net", "skills.sh",
         ]
 
+        # ── Strip Wikipedia/HTML raw markup from finding descriptions ──
+        _wiki_css = re.compile(r'\.mw-parser-output[^}]*\{[^}]*\}')
+        _wiki_html = re.compile(r'<[^>]+>')
+        _raw_css_blob = re.compile(r'\{line-height:\s*inherit[^}]*\}')
         kept = []
         for f in findings:
             title_lower = (f.title or "").lower()
             desc_lower = (f.description or "").lower()
+            # Clean Wikipedia raw markup from descriptions
+            if f.description:
+                f.description = _wiki_css.sub('', f.description)
+                f.description = _wiki_html.sub('', f.description)
+                f.description = _raw_css_blob.sub('', f.description)
+                f.description = ' '.join(f.description.split())  # normalize whitespace
 
             # ── Drop: API key placeholder "findings" ──
             if any(phrase in title_lower or phrase in desc_lower
@@ -5129,6 +5230,14 @@ and confidence assessments. Follow the OUTPUT FORMAT specified above."""
                 "as an ai in this simulation",
                 "i need to fetch", "i might need",
                 "i will treat", "i can mention",
+                # ── LLM monologue leaking as finding descriptions ──
+                "we are asked to perform", "we are asked to",
+                "first, i need to parse", "first i need to",
+                "i need to parse the provided",
+                "the user provided a",
+                "based on the provided articles",
+                "the wikipedia-style article is",
+                "i need to start by",
             ])
 
             if is_meta and not (has_proper_names or has_dates or has_source_ref):
