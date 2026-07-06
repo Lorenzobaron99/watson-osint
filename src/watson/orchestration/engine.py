@@ -1927,7 +1927,7 @@ Examples:
                             # FORCE a targeted person search excluding the non-person Wikipedia hit
                             # Universal fix: when Wikipedia returns a location/org/thing instead of a person,
                             # search with -site:wikipedia.org + person keywords. Works for:
-                            # - Paolo Trecate (comune) → "Paolo Trecate" analyst defense
+                            # - Marco Rossi (comune) → "Marco Rossi" analyst defense
                             # - Austin Texas (city) → "Austin Texas" linkedin
                             # - Paris Hilton (city) → "Paris Hilton" celebrity (though common enough to find anyway)
                             try:
@@ -2808,7 +2808,7 @@ Examples:
                 # employment, board positions) — essential context even for criminal
                 # investigations. Criminal queries add sanctions, court records, and
                 # wanted notices. Without professional queries, deep investigations
-                # miss entire professional profiles (e.g. "Paolo Trecate" → only found
+                # miss entire professional profiles (e.g. "Marco Rossi" → only found
                 # jail lookup sites, never discovered eurodefense.tech).
                 search_label = "searching professional history + court records, legal databases"
                 search_mode = "both"
@@ -4830,7 +4830,7 @@ and confidence assessments. Follow the OUTPUT FORMAT specified above."""
         """Compute token-overlap relevance between target query and finding text.
 
         Returns 0.0 – 1.0. A score of 0 means zero word overlap — the finding
-        is almost certainly unrelated (e.g., "Idaho murders" for "BÓDI Ildikó").
+        is almost certainly unrelated (e.g., "Idaho murders" for "KOVÁCS Anna").
         """
         import unicodedata
         if not target or not text:
@@ -5004,7 +5004,7 @@ and confidence assessments. Follow the OUTPUT FORMAT specified above."""
             "no family members identified",
             "no specific co-conspirator names",
             "no specific fine", "no specific asset",
-            # ── Leaked through BÓDI Ildikó investigation ──
+            # ── Leaked through KOVÁCS investigation ──
             "no specific legal citations",
             "no court identifiers",
             "no child details",
@@ -5111,6 +5111,24 @@ and confidence assessments. Follow the OUTPUT FORMAT specified above."""
                 "i will run", "i will simulate", "i must ask",
                 "you have not", "if you can", "instruct me",
                 "once you provide", "example of what",
+                # ── Leaked through Mohammadzadeh investigation ──
+                "let's first extract", "let's first",
+                "i will open", "i'll open", "i can use python",
+                "i'm not actually able", "i recall the",
+                "for each fact", "i'll also", "i'll keep",
+                "i'll treat", "i'll use", "i can use",
+                "the youtube video is likely",
+                "however, the user also",
+                "i will incorporate", "i can incorporate",
+                "i could open", "i could use",
+                "i don't have the full", "i can view",
+                "i could mention", "i'll rely on",
+                "but i can't see", "i can't see the full",
+                "the search result snippet says",
+                "for iran:", "i can mention that",
+                "as an ai in this simulation",
+                "i need to fetch", "i might need",
+                "i will treat", "i can mention",
             ])
 
             if is_meta and not (has_proper_names or has_dates or has_source_ref):

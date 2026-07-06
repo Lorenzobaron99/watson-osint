@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://pypi.org/project/osintengine/"><img src="https://img.shields.io/badge/pypi-v1.0.2-blue" alt="PyPI"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPLv3-green" alt="License"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-green" alt="License"></a>
   <a href="https://github.com/Lorenzobaron99/watson-osint"><img src="https://img.shields.io/badge/status-active-brightgreen" alt="Status"></a>
 </p>
 
@@ -29,7 +29,7 @@ One target. One command. A dossier that would take an analyst hours.
 
 | You type... | Most tools return... | Watson returns... |
 |---|---|---|
-| "Paolo Trecate" | Wikipedia link, maybe a news article | Employment history, board positions, corporate registrations, domain ownerships, sanctions screening, adverse media, timeline of professional milestones, entity relationship graph |
+| "John Chen" | Wikipedia link, maybe a news article | Employment history, board positions, corporate registrations, domain ownerships, sanctions screening, adverse media, timeline of professional milestones, entity relationship graph |
 | "example.com" | WHOIS record | Domain history, SSL certificates, subdomains, DNS records, IP geolocation, hosting provider, Wayback snapshots, linked social accounts, VirusTotal reputation |
 | "crypto-wallet-0x..." | Nothing useful | Transaction graph, exchange links, associated addresses, risk scoring, dark web mentions |
 

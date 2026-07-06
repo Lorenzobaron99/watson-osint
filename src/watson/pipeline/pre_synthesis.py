@@ -501,7 +501,7 @@ def relevance_score(profile: TargetProfile, text: str) -> float:
 
     # ── Strategy 2.5: Surname-aware penalty (person targets only) ──
     # For multi-word person names, a finding that matches only ONE name part
-    # (e.g., "Ildiko Szabo" matching only "Ildiko" from "BÓDI Ildikó") is a
+    # (e.g., "Anna Kovacs" matching only "Anna" from "KOVÁCS Anna") is a
     # completely different person. Given names are too common; the surname is
     # the primary disambiguator. This penalty prevents the trigram/Jaccard
     # overlap from giving high scores to clearly irrelevant findings.
