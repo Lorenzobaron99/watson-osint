@@ -1,6 +1,6 @@
 [project]
-name = "watson-osint"
-version = "1.0.1"
+name = "osintengine"
+version = "1.0.2"
 description = "The OSINT investigation engine — 7-phase pipeline, persistent knowledge graph, community intelligence"
 readme = "README.md"
 license = "Apache-2.0"
