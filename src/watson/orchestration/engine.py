@@ -2429,21 +2429,31 @@ Examples:
 
             # ── Email registration check (holehe): check which services the email is registered on ──
             try:
-                from holehe.core import Holehe
-                holehe = Holehe()
-                # Run holehe with a short timeout — only care about registered services
-                results = await holehe.check(email_entity.value, timeout=5)
-                registered = [r for r in results if r.get("exists")]
+                import httpx
+                from holehe.core import import_submodules, get_functions, launch_module
+                
+                modules = import_submodules("holehe.modules")
+                funcs = get_functions(modules)
+                
+                out: list[dict] = []
+                async with httpx.AsyncClient(timeout=httpx.Timeout(8.0)) as client:
+                    # Run first 30 modules (fastest ones) in parallel batches
+                    batch_size = 10
+                    for i in range(0, min(len(funcs), 30), batch_size):
+                        batch = funcs[i:i+batch_size]
+                        tasks = [launch_module(fn, email_entity.value, client, out) for fn in batch]
+                        await asyncio.gather(*tasks)
+                
+                registered = [r for r in out if r.get("exists")]
                 if registered:
                     platforms = [r["name"] for r in registered[:15]]
-                    # Create finding
                     from ..core.models import Finding as CoreFinding, FindingSource, FindingSeverity
-                    desc_lines = [f"- {p}" for p in platforms]
+                    desc_lines = [f"- {p} ({r.get('domain', '')})" for p, r in zip(platforms, registered[:15])]
                     rf = CoreFinding(
                         id=f"holehe-{email_entity.value[:8]}",
                         source=FindingSource.SOCIAL_MEDIA,
                         tool="holehe",
-                        title=f"📧 {email_entity.value} is registered on {len(registered)} services",
+                        title=f"📧 {email_entity.value} registered on {len(registered)} services",
                         description="\n".join(desc_lines),
                         evidence=[],
                         confidence=0.7,
