@@ -1,6 +1,6 @@
 [project]
 name = "osintengine"
-version = "1.0.6"
+version = "1.0.7"
 description = "The OSINT investigation engine — 7-phase pipeline, persistent knowledge graph, community intelligence"
 readme = "README.md"
 license = "Apache-2.0"
