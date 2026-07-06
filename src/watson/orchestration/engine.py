@@ -2891,6 +2891,15 @@ Examples:
                     ):
                         name = match.group(1)
                         if name.lower() not in ('the', 'and', 'for', 'Inc', 'Llc'):
+                            # ── spaCy quality gate: only keep real person names ──
+                            try:
+                                from .ner import _spacy_validate_person, _is_garbage_person
+                                if _is_garbage_person(name):
+                                    continue
+                                if not _spacy_validate_person(name, strict_person_only=True):
+                                    continue
+                            except ImportError:
+                                pass  # ner module unavailable — accept regex match
                             people_found.add(name)
                 if people_found:
                     # Auto-pivot: run lightweight background checks on key employees
@@ -5581,6 +5590,16 @@ and confidence assessments. Follow the OUTPUT FORMAT specified above."""
         # Heuristic: short strings with spaces are likely person names
         # Long strings are likely organization/company names
         if len(v.split()) >= 2 and len(v) < 60:
+            # ── spaCy quality gate: validate before classifying as person ──
+            try:
+                from .ner import _spacy_validate_person, _is_garbage_person
+                if _is_garbage_person(v):
+                    return "organization"  # Downgrade garbage to org
+                if _spacy_validate_person(v):
+                    return "person"
+                return "organization"  # spaCy didn't recognize — treat as org
+            except ImportError:
+                pass  # ner module unavailable — accept heuristic
             return "person"
         if len(v) >= 3:
             return "organization"

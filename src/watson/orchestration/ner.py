@@ -62,27 +62,27 @@ _PERSON_FIRST_NAMES = {
 }
 
 
-def _spacy_validate_person(name: str) -> bool:
+def _spacy_validate_person(name: str, strict_person_only: bool = False) -> bool:
     """Check if spaCy recognizes this as a real person name.
 
-    Returns True if spaCy classifies the name as PERSON, ORG, or GPE
+    Returns True if spaCy classifies the name as PERSON or ORG
     (indicating it's a real named entity, not a random phrase).
+    
+    When strict_person_only=True, only PERSON label is accepted
+    (used for employee pivot where ORGs like "Federal Trade Commission" are noise).
     """
     nlp = _get_nlp()
     if nlp is None:
-        # spaCy unavailable — fall back to known-name check
         tokens = name.split()
         return any(t in _PERSON_FIRST_NAMES for t in tokens)
 
     doc = nlp(name)
     for ent in doc.ents:
-        # Must match the FULL candidate, not a substring
         if ent.text.strip() == name.strip():
-            # Only PERSON and ORG are real people/companies
-            # GPE (geo-political entity) like "South Africa" is NOT a person
+            if strict_person_only:
+                return ent.label_ == "PERSON"
             if ent.label_ in ("PERSON", "ORG"):
                 return True
-            # GPE, DATE, CARDINAL, etc. are not people
             return False
 
     # spaCy didn't recognize it as any entity — could be rare name
