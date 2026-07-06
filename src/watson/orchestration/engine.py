@@ -3802,14 +3802,14 @@ Examples:
         primary = sum(1 for f in findings if f.source_tier == "PRIMARY")
         has_url = sum(1 for f in findings if f.source_url)
 
-        # Verifiability score — weighted: URL sources + high-confidence tiers
-        # Most OSINT findings are SECONDARY (news, Wikipedia) — PRIMARY tier
-        # (court docs, sanctions lists) is rare. Weight PROBABLE heavily.
+        # Verifiability score — weighted: confirmed findings + primary sources dominate.
+        # CONFIRMED findings are the gold standard; PRIMARY sources (court docs, sanctions)
+        # carry the most weight. PROBABLE adds marginal confidence.
         report.verifiability_score = (
-            0.25 * (primary / max(total, 1)) +
+            0.35 * (confirmed / max(total, 1)) +
+            0.30 * (primary / max(total, 1)) +
             0.25 * (has_url / max(total, 1)) +
-            0.15 * (confirmed / max(total, 1)) +
-            0.35 * (probable / max(total, 1))
+            0.10 * (probable / max(total, 1))
         )
 
         lines = [
@@ -5138,6 +5138,22 @@ and confidence assessments. Follow the OUTPUT FORMAT specified above."""
             if not f.source_url:
                 f.source_tier = "UNVERIFIED"
                 f.confidence = min(f.confidence, 0.25)
+
+            # ── Drop: DNS/IP resolution noise when target is a person ──
+            # Graph enrichment resolves every domain in findings to IPs and geolocates them.
+            # For person investigations, this produces 14+ noise findings (Cloudflare → Toronto).
+            # Only keep DNS/IP enrichment when the investigation target IS a domain or IP.
+            if getattr(f, 'phase', '') == 'graph_enrich':
+                tf = (f.title or '').lower()
+                df = (f.description or '').lower()
+                # DNS resolution or IP geolocation that's about infrastructure, not the target
+                dns_patterns = [
+                    'dns a record', 'resolves_to', '→ resolves_to',
+                    '→ located_in', 'located_in', 'ip geolocation',
+                    'cloudflare, inc.', '→ toronto', '→ san francisco',
+                ]
+                if any(p in tf or p in df for p in dns_patterns):
+                    continue
 
             kept.append(f)
 
