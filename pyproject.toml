@@ -3,7 +3,7 @@ name = "watson-osint"
 version = "1.0.1"
 description = "The OSINT investigation engine — 7-phase pipeline, persistent knowledge graph, community intelligence"
 readme = "README.md"
-license = "AGPL-3.0-only"
+license = "Apache-2.0"
 authors = [{name = "Lorenzo Baron", email = "baron.lorenzo99@gmail.com"}]
 keywords = ["osint", "investigation", "intelligence", "graph", "open-source", "due-diligence", "security", "research"]
 classifiers = [

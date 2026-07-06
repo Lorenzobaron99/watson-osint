@@ -245,7 +245,7 @@ watson-osint/
 
 ## License
 
-**GNU Affero General Public License v3.0** — free forever for any use. If you deploy a modified Watson as a network service, you must release your changes.
+**Apache License 2.0** — free for any use, private or commercial. Includes explicit patent protection for all contributors and users. Must retain copyright and license notices. No network-use trigger — deploy Watson internally, in the cloud, or embedded in your product without concern.
 
 ---
 
