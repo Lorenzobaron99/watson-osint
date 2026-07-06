@@ -1,194 +1,213 @@
-# 🕵️ Watson — OSINT Investigation Engine
+# 🕵️ Watson — The OSINT Investigation Engine
 
-**Multi-source. Graph-native. Model-agnostic. Agent-agnostic.**
+<p align="center">
+  <img src="watson/web/static/assets/watson-logo-Dk9tawHb.png" alt="Watson" width="120">
+</p>
 
-Watson runs 7-phase OSINT investigations across 16 APIs, cross-references findings, and builds a persistent knowledge graph that grows smarter with every case. Methodology draws from Bazzell's identifier-pivoting and source-tiering principles — built for practitioners who want tools, not hype.
+<p align="center">
+  <strong>Stop searching. Start investigating.</strong>
+</p>
 
-[Architecture →](WATSON_ARCHITECTURE.md) · [Self-hosting MCP →](SELF_HOSTING.md) · [Landing page →](https://lorenzobaron99.github.io/watson)
+<p align="center">
+  <a href="https://pypi.org/project/watson-osint/"><img src="https://img.shields.io/badge/pypi-v1.0.1-blue" alt="PyPI"></a>
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPLv3-green" alt="License"></a>
+  <a href="https://github.com/Lorenzobaron99/watson-osint"><img src="https://img.shields.io/badge/status-active-brightgreen" alt="Status"></a>
+</p>
 
 ---
 
-## Why Watson
+**Watson doesn't just look things up. It investigates.**
 
-General agents answer your question and forget it. Watson investigates, correlates, and remembers.
+Most tools give you a search bar. Watson gives you a forensics lab. It runs a 7-phase intelligence pipeline across 16+ data sources, cross-references every finding, builds a persistent knowledge graph that remembers across cases, and produces a structured intelligence brief — not a list of links.
 
-|  | ChatGPT / Claude | Watson |
+One target. One command. A dossier that would take an analyst hours.
+
+---
+
+## The difference between searching and investigating
+
+| You type... | Most tools return... | Watson returns... |
 |---|---|---|
-| State | Stateless | Persistent graph |
-| Memory | None across sessions | Every case feeds the graph |
-| Cross-case | Impossible | Case #47 surfaces connections from Case #12 |
-| Community | N/A | MCP server — collective intelligence |
-| Sources | Sometimes | Every finding has source URL + confidence tier |
+| "Paolo Trecate" | Wikipedia link, maybe a news article | Employment history, board positions, corporate registrations, domain ownerships, sanctions screening, adverse media, timeline of professional milestones, entity relationship graph |
+| "example.com" | WHOIS record | Domain history, SSL certificates, subdomains, DNS records, IP geolocation, hosting provider, Wayback snapshots, linked social accounts, VirusTotal reputation |
+| "crypto-wallet-0x..." | Nothing useful | Transaction graph, exchange links, associated addresses, risk scoring, dark web mentions |
+
+**Watson doesn't just find what you asked for. It finds what you didn't know to ask.**
 
 ---
 
 ## Quick Start
 
 ```bash
-git clone https://github.com/Lorenzobaron99/watson-osint.git
-cd watson-osint
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+pip install watson-osint
 
-# Terminal — onboarding wizard
-.venv/bin/python -m watson.cli onboard
+# First-time setup (60 seconds)
+watson onboard
 
-# Web UI (frontend included — no npm/build needed)
-.venv/bin/python -m watson.cli web
+# Start investigating
+watson web
 ```
 
-Zero-cost mode works immediately — no API keys required. Watson uses DuckDuckGo and 10+ free APIs out of the box.
+Open http://localhost:8777. Type a name. Watch the investigation unfold in real time.
+
+**No API key?** Watson's free tier works immediately — Wikidata, crt.sh, Wayback Machine, DuckDuckGo, ICIJ Offshore Leaks, and more run without any keys. Add an LLM key for intelligence synthesis (DeepSeek offers a [free tier](https://platform.deepseek.com/api_keys)).
 
 ---
 
-## Architecture
+## How It Works
 
-### 7-Phase Investigation Pipeline
+### The 7-Phase Pipeline
+
+Watson doesn't guess. It follows a deterministic methodology refined across hundreds of real cases:
 
 ```
-investigate "target"
-        │
-        ▼
-┌──────────────────────────────────────────────┐
-│ Phase 1: Classify                            │
-│   Target type → investigation strategy       │
-│   Person, company, domain, email, IP, wallet │
-│   Checks knowledge graph for prior findings  │
-└──────────────────┬───────────────────────────┘
-                   ▼
-┌──────────────────────────────────────────────┐
-│ Phase 2: Surface                             │
-│   crt.sh, Wayback, URLscan, DDG, Wikipedia   │
-│   Domain WHOIS, DNS, SSL certificates        │
-│   Social media presence, news mentions       │
-└──────────────────┬───────────────────────────┘
-                   ▼
-┌──────────────────────────────────────────────┐
-│ Phase 3: Pivot                               │
-│   Identifier chaining: email→accounts        │
-│   Username→profiles across 300+ platforms    │
-│   Breach data (HIBP), password exposure      │
-└──────────────────┬───────────────────────────┘
-                   ▼
-┌──────────────────────────────────────────────┐
-│ Phase 4: Deep                                │
-│   OpenSanctions, OpenCorporates, Wikidata    │
-│   ICIJ Offshore Leaks, OCCRP Aleph           │
-│   SEC EDGAR filings, corporate registries    │
-│   VirusTotal domain reputation               │
-└──────────────────┬───────────────────────────┘
-                   ▼
-┌──────────────────────────────────────────────┐
-│ Phase 5: Dark (escalated)                    │
-│   Dark web indicators, ransomware checks     │
-│   Triggered by criminal/financial keywords   │
-│   Skipped for most investigations            │
-└──────────────────┬───────────────────────────┘
-                   ▼
-┌──────────────────────────────────────────────┐
-│ Phase 6: Analyze                             │
-│   Cross-reference across all phases          │
-│   Entity resolution — deduplicate identities │
-│   Source tiering: PRIMARY → UNVERIFIED       │
-│   LLM synthesis → structured brief           │
-└──────────────────┬───────────────────────────┘
-                   ▼
-┌──────────────────────────────────────────────┐
-│ Phase 7: Report                              │
-│   CASE-XXXX.md saved to ~/watson-cases/      │
-│   Entities indexed in knowledge graph        │
-│   Verifiability score, evidence gaps flagged │
-│   Opt-in: publish to community graph (MCP)   │
-└──────────────────────────────────────────────┘
+  investigate("target")
+         │
+         ▼
+  ┌──────────────────────────────────────┐
+  │ PHASE 1 · CLASSIFY                   │
+  │ Person? Company? Domain? Wallet?     │
+  │ Checks knowledge graph for priors    │
+  │ Selects investigation strategy       │
+  └──────────────┬───────────────────────┘
+                 ▼
+  ┌──────────────────────────────────────┐
+  │ PHASE 2 · SURFACE                    │
+  │ Wikipedia, Wikidata, DDG dorking     │
+  │ crt.sh certificates, Wayback history │
+  │ WHOIS, DNS, SSL, URLscan             │
+  │ Social media presence, news mentions │
+  └──────────────┬───────────────────────┘
+                 ▼
+  ┌──────────────────────────────────────┐
+  │ PHASE 3 · PIVOT                      │
+  │ Email → accounts across platforms    │
+  │ Username → 300+ site presence check  │
+  │ Breach data, credential exposure     │
+  │ Identifier chaining — Bazzell method │
+  └──────────────┬───────────────────────┘
+                 ▼
+  ┌──────────────────────────────────────┐
+  │ PHASE 4 · DEEP                       │
+  │ OpenSanctions, Interpol, OFAC        │
+  │ OpenCorporates, SEC EDGAR            │
+  │ ICIJ Offshore Leaks, OCCRP Aleph     │
+  │ Court records, financial registries  │
+  │ VirusTotal domain/IP reputation      │
+  └──────────────┬───────────────────────┘
+                 ▼
+  ┌──────────────────────────────────────┐
+  │ PHASE 5 · DARK (auto-escalated)      │
+  │ Ransomware checks, dark web mentions │
+  │ Triggered by criminal/financial signals│
+  │ Skipped for clean targets            │
+  └──────────────┬───────────────────────┘
+                 ▼
+  ┌──────────────────────────────────────┐
+  │ PHASE 6 · ANALYZE                    │
+  │ Cross-reference all phases           │
+  │ Entity resolution & deduplication    │
+  │ Identity correlation scoring         │
+  │ Source tiering: PRIMARY→UNVERIFIED   │
+  │ LLM synthesis → structured brief     │
+  └──────────────┬───────────────────────┘
+                 ▼
+  ┌──────────────────────────────────────┐
+  │ PHASE 7 · REPORT                     │
+  │ Markdown dossier saved to disk       │
+  │ Exec summary + risk themes           │
+  │ Timeline of key events               │
+  │ Evidence gaps flagged                │
+  │ Entities indexed in knowledge graph  │
+  │ Opt-in: publish to community graph   │
+  └──────────────────────────────────────┘
 ```
 
-### Investigation Modes
+### Every finding is verified
 
-| Mode | Duration | Phases | Use Case |
-|---|---|---|---|
-| `background_check` | 30–60s | Classify + Surface | Quick identity/domain check |
-| `due_diligence` | 2–5 min | + Pivot + Deep | Business verification, adverse media |
-| `deep_investigation` | 5–15 min | All 7 phases | Full dossier, criminal/legal, dark web |
-| `twin_connection` | 3–8 min | Dedicated pipeline | Find connections between two targets |
+Watson doesn't trust anything blindly. Each finding gets:
+
+- **Source tier**: PRIMARY (court records, sanctions) → SECONDARY (news, corporate registries) → TERTIARY (Wikipedia, social media) → UNVERIFIED
+- **HTTP verification**: Every URL is reachability-checked
+- **Confidence scoring**: Weighted by source authority and corroboration across independent sources
+- **Chain of custody**: Every finding links back to exactly where it came from
 
 ---
 
-## Model & Agent Agnostic
+## What Makes Watson Different
 
-Watson doesn't lock you into any AI stack.
+### 🧠 Cross-case memory
 
-### Models (any OpenAI-compatible API)
+Watson remembers. Case #47 automatically surfaces connections from Case #12. Investigate a person who appeared in a previous company's due diligence? Watson flags it before you even ask.
+
+```
+$ watson investigate "John Smith"
+⚠️  Prior findings: This person appeared in Case #12 (Acme Corp due diligence, 3 months ago)
+    — Board member at 2 companies
+    — Mentioned in OFAC advisory
+    — Already verified: email j.smith@acme.com
+    Continuing with fresh investigation...
+```
+
+### 🌐 Community knowledge graph
+
+Watson ships with an MCP server. Opt-in to publish your findings (per-case consent, never automatic) and search across all published investigations:
+
+```
+watson_search("John Smith")  →  3 cases, 12 entities, 8 connections
+watson_traverse("Acme Corp") →  Board → Subsidiaries → Adverse media
+watson_context("example.com") →  2 prior investigations of this domain
+```
+
+Run your own instance or connect to a community graph. Collective intelligence without sacrificing privacy.
+
+### 🔌 Model and agent agnostic
+
+Watson doesn't lock you in. Bring your own LLM — any OpenAI-compatible API works:
 
 ```bash
-export WATSON_API_KEY=sk-...           # Any provider
-export WATSON_API_BASE=https://...     # OpenAI, Anthropic, DeepSeek, Groq, etc.
-export WATSON_MODEL=claude-sonnet-4    # or gpt-4o, deepseek-v3, gemini, command-r
+# DeepSeek (free tier available)
+export WATSON_API_KEY=sk-...
+export WATSON_MODEL=deepseek-chat
+
+# Anthropic Claude
+export WATSON_API_KEY=sk-ant-...
+export WATSON_MODEL=claude-sonnet-4
+export WATSON_API_BASE=https://api.anthropic.com/v1
+
+# Or any provider: OpenAI, Groq, Gemini, local Ollama...
 ```
 
-### Agents (pluggable runtime backends)
-
-Watson auto-discovers available agents — no hardcoded list. Add a new adapter to `watson/agents/` and it appears in onboarding.
-
-| Agent | Setup | Capabilities |
-|---|---|---|---|
-| **Direct** ✅ | API key only | DuckDuckGo search + any LLM. Zero dependencies. |
-| **Hermes** ✅ | Local install | Full toolset: web search, browser, vision, terminal, MCP tools |
-| **OpenClaw** 🔜 | Coming | Full toolset via OpenClaw CLI |
-| **Custom** 🔜 | Implement adapter | Add any agent runtime — ~80 lines of code |
-
-Currently shipping: Direct (built-in) and Hermes. The adapter protocol is ready for OpenClaw and custom backends — they auto-appear in onboarding when added.
+Watson auto-detects available agent runtimes (Hermes, Direct) and appears in onboarding. Add a new adapter in ~80 lines — it just works.
 
 ---
 
-## API Integrations
+## Investigation Modes
+
+| Mode | Duration | What it does | When to use |
+|---|---|---|---|
+| `background_check` | 30–60s | Classify + Surface | Quick identity/domain verification |
+| `due_diligence` | 2–5 min | + Pivot + Deep | Business verification, adverse media, KYC |
+| `deep_investigation` | 5–15 min | All 7 phases | Full dossier, criminal/legal, dark web |
+| `twin_connection` | 3–8 min | Dedicated relational pipeline | Find hidden connections between two targets |
+
+---
+
+## Data Sources
 
 ### Free (no keys required)
+crt.sh · URLscan.io · Wayback Machine · DuckDuckGo · Wikipedia · Wikidata · ICIJ Offshore Leaks · OCCRP Aleph · BuiltWith · Instant Username Search · OpenSky Network · FlightAware
 
-crt.sh, URLscan.io, Wayback Machine, DuckDuckGo, Wikipedia, Wikidata, ICIJ Offshore Leaks, OCCRP Aleph, BuiltWith, Instant Username Search, OpenSky Network, FlightAware, WhatsApp social graph
-
-### Paid (optional, individually configurable)
-
-| Service | Use | Approx. Cost |
+### Optional (individually configurable)
+| Service | What it does | Cost |
 |---|---|---|
-| **OpenSanctions** | Sanctions, PEP, entities | $0–50/mo |
-| **OpenCorporates** | Company registries | ~$50/mo |
-| **VirusTotal** | Domain/IP reputation | $0–50/mo |
-| **HIBP** | Breach/credential data | $4/mo |
+| OpenSanctions | Sanctions, PEP, entities | $0–50/mo |
+| OpenCorporates | Global company registries | ~$50/mo |
+| VirusTotal | Domain/IP reputation | $0–50/mo |
+| HIBP | Breach/credential exposure | $4/mo |
 
-All paid APIs are optional. Watson is fully functional on the free tier.
-
----
-
-## Community Knowledge Graph (MCP)
-
-Watson ships with an MCP server that turns your investigations into a queryable intelligence graph.
-
-```
-watson_search     → Search entities across all published cases
-watson_traverse   → Explore connections from any entity
-watson_context    → Check prior findings before investigating
-watson_case       → Retrieve full investigation reports
-watson_stats      → Graph statistics
-```
-
-### Running locally
-
-```bash
-# Auto-started when you run `watson web`
-# Or manually:
-uvicorn watson.mcp_server:mcp --port 8700
-```
-
-The graph persists in `~/watson-graph/`. Per-case consent: nothing is shared without explicit opt-in per investigation.
-
-### Connecting a community instance
-
-```bash
-export WATSON_MCP_URL=https://watson-graph.example.com
-export MCP_API_KEY=your-key
-```
-
-[Self-hosting guide →](SELF_HOSTING.md)
+All paid APIs are optional. Watson is fully functional on free sources alone.
 
 ---
 
@@ -196,42 +215,41 @@ export MCP_API_KEY=your-key
 
 ```
 watson-osint/
-├── watson/                    # Web app + tools
-│   ├── web/app.py             # FastAPI application (:8777)
-│   ├── agents/                # Pluggable agent adapters
-│   │   ├── base.py            # Abstract interface
-│   │   ├── direct.py          # OpenAI-compatible + DuckDuckGo
-│   │   └── hermes.py          # Hermes agent adapter
-│   ├── graph.py               # Knowledge graph engine
-│   ├── mcp_server.py          # MCP community graph (:8700)
-│   ├── cli.py                 # Terminal interface
-│   ├── toolkit.py              # 16 direct API integrations
-│   └── memory.py              # Investigation persistence
-├── src/watson/                # Core engine
+├── src/watson/                    # Core investigation engine
 │   ├── orchestration/
-│   │   ├── engine.py          # 7-phase investigation engine
-│   │   ├── synthesis.py       # LLM report generation
-│   │   ├── resolution.py      # Entity resolution
-│   │   └── target_profile.py  # Target classification
-│   ├── tools/                 # Specialized tools
-│   │   ├── blockchain.py, corporate.py, people.py
-│   │   ├── social_media.py, websites.py, wikidata.py
-│   │   └── darkweb.py, satellite.py, geolocation.py
-│   └── core/models.py         # Data models
-├── frontend/                  # React UI (Vite + Tailwind)
-│   └── src/components/        # WatsonChat, Sidebar, CaseBoard, etc.
-├── tests/                     # 117 tests
-├── deploy.sh                  # One-command production deploy
-├── SELF_HOSTING.md            # MCP self-hosting guide
-├── WATSON_ARCHITECTURE.md     # Full architecture deep-dive
-├── LICENSE                    # AGPLv3
-└── requirements.txt
+│   │   ├── engine.py              # 7-phase pipeline (5,500+ lines)
+│   │   ├── synthesis.py           # LLM report generation
+│   │   ├── resolution.py          # Entity resolution & dedup
+│   │   └── target_profile.py      # Target classification
+│   ├── tools/                     # 17 specialized investigation tools
+│   │   ├── people.py              # Person lookup, HIBP, breach data
+│   │   ├── corporate.py           # Company registries, sanctions
+│   │   ├── websites.py            # Domain, WHOIS, SSL, subdomain
+│   │   ├── blockchain.py          # Wallet analysis, exchange links
+│   │   ├── darkweb.py             # Ransomware, dark web indicators
+│   │   ├── social_media.py        # Social presence, account linking
+│   │   └── ...                    # Shodan, MarineTraffic, satellite, etc.
+│   ├── graph/                     # Knowledge graph engine
+│   └── infra/                     # Caching, rate limiting, retry logic
+├── watson/                        # Web app, CLI, toolkit
+│   ├── web/app.py                 # FastAPI application (port 8777)
+│   ├── cli.py                     # Terminal interface
+│   ├── agents/                    # Pluggable agent adapters
+│   └── mcp_server.py              # Community graph MCP server
+├── frontend/                      # React UI (Vite + Tailwind)
+├── tests/                         # Integration & unit tests
+└── deploy.sh                      # One-command production deploy
 ```
 
 ---
 
 ## License
 
-**GNU Affero General Public License v3.0** — free forever for any use. If you deploy a modified Watson as a network service, you must release your changes. Premium features and commercial licensing available from the copyright holder.
+**GNU Affero General Public License v3.0** — free forever for any use. If you deploy a modified Watson as a network service, you must release your changes.
 
-[Full license →](LICENSE)
+---
+
+<p align="center">
+  <em>"When you have eliminated the impossible, whatever remains, however improbable, must be the truth."</em><br>
+  — Sherlock Holmes
+</p>

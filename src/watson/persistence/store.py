@@ -200,7 +200,7 @@ class InvestigationStore:
                 confirmed = row[2] or 0
 
                 cur2 = conn.execute(
-                    "SELECT COUNT(*) FROM investigations WHERE status = 'completed'"
+                    "SELECT COUNT(*) FROM investigations WHERE status IN ('completed', 'complete')"
                 )
                 completed = cur2.fetchone()[0] or 0
 

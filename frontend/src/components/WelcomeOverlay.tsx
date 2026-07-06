@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { ArrowRight, Check } from "lucide-react";
+import { ArrowRight, Check, Key } from "lucide-react";
 import watsonLogo from "../assets/watson-logo.png";
 
 const SHERLOCK_QUOTES = [
@@ -17,6 +17,7 @@ const getRandomQuote = () => SHERLOCK_QUOTES[Math.floor(Math.random() * SHERLOCK
 
 interface WelcomeOverlayProps {
   onComplete: () => void;
+  onOpenSettings: () => void;
 }
 
 const STEPS = [
@@ -33,12 +34,17 @@ const STEPS = [
     body: "When Watson identifies notable people or organizations in an investigation, they automatically appear in the Personnel tab. You can also add suspects manually.",
   },
   {
+    title: "Configure Your LLM Key",
+    body: "Watson needs an LLM provider to generate intelligence reports. Pick any provider — DeepSeek (free tier), OpenAI, Anthropic, or a local model via Hermes. Paste your API key below, then hit Continue.",
+    isSetup: true,
+  },
+  {
     title: "Evidence-Backed",
     body: "Every finding carries a source URL and confidence score. Watson never fabricates data. Verifiability scores tell you how solid the evidence is — aim for 70%+.",
   },
 ];
 
-export default function WelcomeOverlay({ onComplete }: WelcomeOverlayProps) {
+export default function WelcomeOverlay({ onComplete, onOpenSettings }: WelcomeOverlayProps) {
   const [step, setStep] = useState(0);
   const [visible, setVisible] = useState(false);
 
@@ -50,7 +56,24 @@ export default function WelcomeOverlay({ onComplete }: WelcomeOverlayProps) {
 
   const current = STEPS[step];
   const isLast = step === STEPS.length - 1;
+  const isSetup = (current as any).isSetup;
   const [quote] = useState(getRandomQuote);
+
+  const handleNext = () => {
+    if (isSetup) {
+      // Open settings to configure API key, then advance
+      onOpenSettings();
+      if (isLast) {
+        onComplete();
+      } else {
+        setStep(step + 1);
+      }
+    } else if (isLast) {
+      onComplete();
+    } else {
+      setStep(step + 1);
+    }
+  };
 
   return (
     <div
@@ -113,10 +136,15 @@ export default function WelcomeOverlay({ onComplete }: WelcomeOverlayProps) {
               </button>
             )}
             <button
-              onClick={isLast ? onComplete : () => setStep(step + 1)}
+              onClick={handleNext}
               className="px-5 py-2 bg-primary text-background-dark font-label-caps font-bold rounded-lg hover:brightness-110 transition-all text-xs flex items-center gap-2 cursor-pointer"
             >
-              {isLast ? (
+              {isSetup ? (
+                <>
+                  <Key size={14} />
+                  Configure API Key
+                </>
+              ) : isLast ? (
                 <>
                   <Check size={14} />
                   Get Started

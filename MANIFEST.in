@@ -1,0 +1,24 @@
+include LICENSE
+include README.md
+include pyproject.toml
+include requirements.txt
+include .env.example
+include SELF_HOSTING.md
+include WATSON_ARCHITECTURE.md
+include deploy.sh
+
+recursive-include src *.py
+recursive-include watson *.py
+recursive-include watson/web/static *
+recursive-include watson/web/templates *
+recursive-include tests *.py
+
+exclude .gitignore
+prune .venv
+prune __pycache__
+prune *.egg-info
+prune dist
+prune build
+prune node_modules
+prune frontend/node_modules
+prune frontend/.vite

@@ -179,6 +179,34 @@ After adding, Hermes will auto-discover the 5 Watson MCP tools on next start.
 
 ## Production Deployment
 
+### Security — MCP Authentication
+
+The MCP server has two-tier auth:
+
+| Tier | Env Var | What it gates |
+|---|---|---|
+| **Write** | `MCP_API_KEY` | `POST /api/ingest`, `DELETE /api/cases/{id}` |
+| **Read** | `MCP_READ_KEY` (optional) | All `GET` endpoints — search, traverse, cases, stats |
+
+**Read endpoints are OPEN by default.** Anyone who can reach the MCP server can read all published cases, entity data, and full investigation reports. This is intentional for a community knowledge graph — but if you're deploying behind a firewall or need access control:
+
+```bash
+# Gate read endpoints — clients must send X-API-Key header
+export MCP_READ_KEY=your-read-key
+```
+
+When `MCP_READ_KEY` is set:
+- All `GET` endpoints require `X-API-Key: <MCP_READ_KEY>` header
+- The write key (`MCP_API_KEY`) is also accepted for reads
+- Unauthenticated GET requests return 401
+
+**Unpublishing a case:**
+```bash
+curl -X DELETE http://localhost:8700/api/cases/CASE-ABC12345 \
+  -H "X-API-Key: $MCP_API_KEY"
+```
+Removes all entities from the graph and deletes the case from the published index. Entities shared with other cases are preserved (only the case reference is removed).
+
 ### systemd (Linux)
 
 ```ini

@@ -106,25 +106,40 @@ class KnowledgeGraph:
     # ── Persistence ──────────────────────────────────────────────
 
     def load(self) -> None:
-        """Load graph from disk."""
+        """Load graph from disk. Resilient to corrupted lines."""
         if self._loaded:
             return
 
+        import logging
+        _log = logging.getLogger("watson.graph")
+
         entities_path = self.data_dir / "entities.jsonl"
         if entities_path.exists():
-            for line in entities_path.read_text().splitlines():
-                if line.strip():
+            for i, line in enumerate(entities_path.read_text().splitlines(), 1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
                     d = json.loads(line)
-                    e = Entity(**d)
-                    self._entities[e.id] = e
+                except json.JSONDecodeError:
+                    _log.warning("graph: skipping corrupt entities.jsonl line %d", i)
+                    continue
+                e = Entity(**d)
+                self._entities[e.id] = e
 
         relations_path = self.data_dir / "relations.jsonl"
         if relations_path.exists():
-            for line in relations_path.read_text().splitlines():
-                if line.strip():
+            for i, line in enumerate(relations_path.read_text().splitlines(), 1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
                     d = json.loads(line)
-                    r = Relation(**d)
-                    self._relations[r.id] = r
+                except json.JSONDecodeError:
+                    _log.warning("graph: skipping corrupt relations.jsonl line %d", i)
+                    continue
+                r = Relation(**d)
+                self._relations[r.id] = r
 
         self._loaded = True
 
@@ -358,3 +373,34 @@ class KnowledgeGraph:
                 key=lambda x: -x["case_count"],
             )[:10],
         }
+
+    def remove_case(self, case_id: str) -> int:
+        """Remove all entities belonging to a case from the graph.
+
+        Returns the number of entities removed.
+        Call this when unpublishing a case from the community graph.
+        """
+        self.load()
+        removed = 0
+        to_remove = []
+        for eid, entity in self._entities.items():
+            if case_id in entity.case_ids:
+                entity.case_ids = [c for c in entity.case_ids if c != case_id]
+                if not entity.case_ids:
+                    # Entity has no remaining cases — fully remove
+                    to_remove.append(eid)
+                removed += 1
+        
+        for eid in to_remove:
+            del self._entities[eid]
+        
+        # Also remove relations for this case
+        rel_to_remove = []
+        for rid, rel in self._relations.items():
+            if rel.case_id == case_id:
+                rel_to_remove.append(rid)
+        for rid in rel_to_remove:
+            del self._relations[rid]
+        
+        self.save()
+        return removed

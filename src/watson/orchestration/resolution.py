@@ -127,6 +127,22 @@ _BAD_TOKENS = {
     # Web chrome words
     "cookie", "policy", "uploading", "join", "lite", "update",
     "contact", "agreement", "sign", "log",
+    # LLM-generated garbage (observed from dark/gap phases)
+    "arrested", "cartel", "super", "longman", "pronunciation",
+    "dictionary", "pearson", "ransomware", "breach", "jail",
+    "primary", "target", "final", "assessment", "sand", "dune",
+    "padel", "financial", "investigation", "geospatial", "analysis",
+    "language", "search", "results", "offshore", "company",
+    "infrastructure", "identified", "cybercrime", "indicators",
+    "digital", "footprint", "presence", "detected", "overall",
+    "confidence", "forum", "discussions", "mentions",
+    "marketplaces", "mixing", "services", "private", "channels",
+    "leak", "pastebin", "extradited", "wanted", "sanctioned",
+    "sanctions", "evasion", "relevance", "lieutenant", "active",
+    # Verdict/sentencing terms that shouldn't be entities
+    "charges", "conviction", "sentence", "sentencing", "remarks",
+    "pleaded", "guilty", "court", "criminal", "legal",
+    "victim", "murder", "organisation", "affiliation",
 }
 
 # Article prefixes that disqualify person names
@@ -393,10 +409,13 @@ def build_intelligence_picture(
                 if name and not _is_entity_noise(name):
                     raw_entities.append((name, etype, fid, conf, agent_name))
         else:
-            # Fallback: extract from text
-            text = f"{getattr(f, 'title', '')} {getattr(f, 'description', '')}"
-            for name, etype in _extract_entities_from_text(text):
-                raw_entities.append((name, etype, fid, conf, agent_name))
+            # Fallback: extract from text — but only for non-trash findings
+            conf = getattr(f, "confidence", 0.5)
+            tier = getattr(f, "tier", "")
+            if conf >= 0.35 or tier in ("PRIMARY", "SECONDARY", "PROBABLE", "CONFIRMED"):
+                text = f"{getattr(f, 'title', '')} {getattr(f, 'description', '')}"
+                for name, etype in _extract_entities_from_text(text):
+                    raw_entities.append((name, etype, fid, conf, agent_name))
     
     if not raw_entities:
         return [], []

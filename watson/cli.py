@@ -237,6 +237,16 @@ def cmd_onboard():
         
         model = input(f"  {Y}Model [gpt-4o]:{X} ").strip() or config.get("model") or "gpt-4o"
         config["model"] = model
+        
+        # Also save to the web UI key store so the server picks it up
+        try:
+            from watson.api_keys import set_key
+            provider_slug = "deepseek" if "deepseek" in config.get("api_base", "") else "openai"
+            if config.get("api_key"):
+                set_key(provider_slug, config["api_key"])
+                print(f"  {D}→ Also saved to web UI key store as '{provider_slug}'{X}")
+        except Exception:
+            pass
 
     # ── Step 2: OSINT API keys (optional) ──
     print(f"\n{Y}═══ Step 2/4: OSINT API Keys {D}(optional — free tier works without any){X}\n")

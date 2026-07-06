@@ -7,7 +7,9 @@ loop gathers sources; synthesis READS them and produces:
   - Key risk themes (grouped: antitrust, labor, tax, data/privacy, sanctions…)
   - Severity per theme (HIGH / MEDIUM / LOW) with the evidence behind it
   - Notable entities (people, orgs, regulators involved)
+  - Timeline (chronological events: career, criminal, legal, financial, education)
   - Evidence gaps (what couldn't be verified)
+  - Recommended next steps
   - Source list with credibility
 
 Every claim is grounded in a finding — synthesis NEVER invents facts.
@@ -56,6 +58,8 @@ FINDINGS:
 
 {resolved_entities}
 
+{cross_platform_correlation}
+
 Produce STRICT JSON (no markdown fences) with this shape:
 {{
   "executive_summary": "2-3 sentence bottom line for a decision-maker",
@@ -65,6 +69,10 @@ Produce STRICT JSON (no markdown fences) with this shape:
   ],
   "notable_entities": [
     {{"name": "...", "role": "regulator|executive|company|court|cybercriminal", "context": "..."}}
+  ],
+  "timeline": [
+    {{"date": "YYYY or YYYY-MM or YYYY-MM-DD", "category": "career|criminal|legal|education|personal|financial",
+      "event": "what happened", "source_title": "which finding this came from"}}
   ],
   "evidence_gaps": ["what could not be verified or is missing"],
   "recommended_next_steps": [
@@ -78,6 +86,12 @@ Rules:
 - 2-5 risk themes, ordered by severity.
 - severity reflects evidence strength + impact, not your opinion.
 - notable_entities: real orgs/people/regulators that appear in the findings.
+- TIMELINE: extract every date-backed event from findings. Birth dates, employment
+  start/end, arrests, convictions, sentencing, sanctions designations, company
+  founding, acquisitions, lawsuits filed/resolved. Use partial dates when exact
+  unknown (e.g., "2025" or "2025-07"). Order chronologically. Max 15 events.
+  Categories: career, criminal, legal, education, personal, financial.
+  NEVER invent dates — if a finding says "sentenced in 2023", use "2023", not a guess.
 - Be specific: name the regulator, the amount, the year when the finding states it.
 - If findings are thin, say so in executive_summary and keep themes minimal.
 - CRITICAL for recommended_next_steps: do NOT suggest steps that were ALREADY
@@ -100,7 +114,13 @@ _TARGET_GUIDANCE = {
         "- Risk themes are OPTIONAL for persons. If no sanctions/criminal findings exist, that's\n"
         "  NORMAL for most people. Don't fabricate risk themes to fill space.\n"
         "- The executive summary should state WHO this person is (role, org, location) based on\n"
-        "  available findings, even if partial."
+        "  available findings, even if partial.\n"
+        "- ENTITY DISAMBIGUATION: If findings describe what appear to be MULTIPLE DIFFERENT PEOPLE\n"
+        "  sharing the same name (e.g., a wanted fugitive AND an academic researcher), you MUST\n"
+        "  flag this ambiguity. In notable_entities, list each distinct identity separately with\n"
+        "  'role' indicating what's known about EACH. Add a risk_theme with theme 'Entity Disambiguation'\n"
+        "  explaining whether these are likely the same person or different individuals. This is\n"
+        "  CRITICAL — conflating two people with the same name is a catastrophic intelligence failure."
     ),
     "email": (
         "EMAIL INVESTIGATION GUIDANCE:\n"
@@ -115,7 +135,13 @@ _TARGET_GUIDANCE = {
     "company": (
         "COMPANY INVESTIGATION GUIDANCE:\n"
         "- Focus on corporate structure, ownership, regulatory actions, sanctions, controversies.\n"
-        "- Executive leadership, subsidiaries, and legal risks are key."
+        "- Executive leadership, subsidiaries, and legal risks are key.\n"
+        "- EMPLOYEE PIVOT FINDINGS: Findings prefixed with 👤 [Name] are key people detected\n"
+        "  during the investigation. Cross-reference them in risk themes and notable entities.\n"
+        "  If an executive has sanctions, lawsuits, or controversy findings, surface that in\n"
+        "  the executive summary — it's often the most actionable intelligence in the report.\n"
+        "- Risk themes should include 'Executive / Leadership Risk' when key people have\n"
+        "  adverse findings (lawsuits, sanctions, controversies)."
     ),
     "wallet": (
         "WALLET INVESTIGATION GUIDANCE:\n"
@@ -205,6 +231,33 @@ def _findings_block(findings, max_chars: int = 6000) -> str:
         lines.append(chunk)
         total += len(chunk)
     return "\n".join(lines)
+
+
+def _has_substantive_content(findings: list) -> bool:
+    """Check if findings contain more than social media noise.
+    
+    Returns True if findings include Wikipedia articles, FBI data, criminal/legal
+    content — anything the deterministic brief can't handle. Prevents the class of
+    bugs where "verified digital footprint with 2 professional profiles" is
+    reported for a mafia boss or convicted murderer.
+    """
+    substantive_keywords = [
+        "wikipedia", "fbi", "wanted", "convicted", "sanctions",
+        "sentenced", "arrested", "indictment", "mafia", "cartel",
+        "money laundering", "fraud ", "racketeering", "murder",
+        "assassination", "trafficking", "conspiracy", "wire fraud",
+        "life imprisonment", "organized crime", "bratva",
+        "opensanctions", "interpol", "bureau of investigation",
+        "justice department", "court records", "prison",
+    ]
+    for f in findings:
+        title = (getattr(f, "title", "") or "").lower()
+        desc = (getattr(f, "description", "") or "").lower()
+        combined = title + " " + desc
+        for kw in substantive_keywords:
+            if kw in combined:
+                return True
+    return False
 
 
 def _deterministic_person_brief(query: str, findings: list) -> dict:
@@ -329,6 +382,7 @@ async def synthesize_brief(
     resolved_entities: list | None = None,
     investigation_mode: str = "",
     graph_context: dict | None = None,
+    correlation: dict | None = None,
 ) -> dict | None:
     """Produce a structured intelligence brief from findings. Returns dict or None."""
     # Filter out pure fetch-failures
@@ -362,11 +416,15 @@ async def synthesize_brief(
             ))
 
     # Person targets: deterministic extraction for background_check and due_diligence.
-    # Deep investigation (criminal/sanctions/court targets) needs LLM synthesis —
-    # the deterministic brief only knows about LinkedIn/GitHub profiles, not sanctions,
-    # indictments, or cartel affiliations. Deep investigation findings ARE the deliverable.
+    # BUT: if findings contain Wikipedia, FBI, criminal, or legal content,
+    # the deterministic brief (which only knows LinkedIn/GitHub profiles) will
+    # produce garbage like "verified digital footprint with 2 professional profiles"
+    # for a mafia boss. Use LLM synthesis when there's substantive content.
     if target_type == "person" and investigation_mode != "deep_investigation":
-        return _deterministic_person_brief(query, usable)
+        if not _has_substantive_content(usable):
+            return _deterministic_person_brief(query, usable)
+        # Criminal/legal content detected — fall through to LLM synthesis
+        logger.debug("synthesis: substantive content detected, using LLM for %s", query[:60])
     
     # Non-person targets: LLM synthesis
 
@@ -383,19 +441,23 @@ async def synthesize_brief(
         target_specific_guidance=target_guidance,
         findings=_findings_block(usable),
         resolved_entities=_format_resolved_entities(resolved_entities),
+        cross_platform_correlation=_format_correlation(correlation),
         executed_tools=_format_executed_tools(executed_tools),
     )
 
     try:
-        raw = await call_llm(prompt, timeout=180, max_tokens=1500)
-        if not raw:
-            logger.info("synthesis: first LLM attempt empty, retrying")
-            raw = await call_llm(prompt, timeout=180, max_tokens=1500)
+        raw = await call_llm(prompt, timeout=180, max_tokens=4096)
+        if not raw or not raw.strip():
+            logger.info("synthesis: first LLM attempt empty, retrying with higher tokens")
+            raw = await call_llm(prompt, timeout=180, max_tokens=8192)
+        if not raw or not raw.strip():
+            logger.warning("synthesis: both LLM attempts returned empty — using fallback")
+            return _fallback_brief(query, usable)
     except TypeError:
         try:
-            raw = await call_llm(prompt, timeout=60)
+            raw = await call_llm(prompt, timeout=120, max_tokens=4096)
         except TypeError:
-            raw = await call_llm(prompt)
+            raw = await call_llm(prompt, max_tokens=4096)
     except Exception as e:
         logger.warning("synthesis_llm_failed: %s", e)
         raw = None
@@ -436,6 +498,7 @@ def _fallback_brief(query: str, findings: list) -> dict:
     
     sources = []
     titles = []
+    entities_found: dict[str, list[str]] = {}  # type -> [values]
     for f in findings:
         url = getattr(f, "source_url", "") or (getattr(f, "raw_data", {}) or {}).get("url", "")
         if not url:
@@ -447,42 +510,157 @@ def _fallback_brief(query: str, findings: list) -> dict:
         title = getattr(f, "title", "")
         if title and not title.lower().startswith(("check_", "could not read")):
             titles.append(title[:150])
+        # Extract entity types from graph findings
+        ft = getattr(f, "finding_type", "") or ""
+        fval = getattr(f, "source_type", "") or ""
+        if ft in ("domain", "ip_address", "person", "organization", "email", "location"):
+            if ft not in entities_found:
+                entities_found[ft] = []
+            entities_found[ft].append(title[:80])
+        # Employee pivot findings carry embedded entities
+        for ent in getattr(f, "entities", []) or []:
+            ent_type = ent.get("type", "person") if isinstance(ent, dict) else "person"
+            ent_name = ent.get("name", title[:60]) if isinstance(ent, dict) else str(ent)
+            if ent_type not in entities_found:
+                entities_found[ent_type] = []
+            entities_found[ent_type].append(str(ent_name)[:80])
     
-    # Build a real summary from what was found
-    top_titles = titles[:8]
-    summary_parts = [f"Watson gathered {len(findings)} sources ({len(sources)} verified URLs) on '{query}'."]
-    if top_titles:
-        summary_parts.append("Key findings include: " + "; ".join(top_titles[:5]))
+    # Build a real summary
+    confirmed = sum(1 for f in findings if getattr(f, "tier", "") == "CONFIRMED")
+    total = len(findings)
     
-    # Detect themes from titles
+    # Extract meaningful content from findings
+    people = entities_found.get("person", [])
+    orgs = entities_found.get("organization", [])
+    domains = entities_found.get("domain", [])
+    locations = entities_found.get("location", [])
+    
+    parts = [f"Investigation of '{query}' gathered {total} findings ({confirmed} confirmed) from {len(sources)} verified sources."]
+    
+    if people:
+        parts.append(f"Key individuals: {', '.join(people[:3])}.")
+    if orgs:
+        parts.append(f"Connected organizations: {', '.join(orgs[:3])}.")
+    if domains:
+        parts.append(f"Infrastructure mapped: {len(domains)} domains, {len(entities_found.get('ip_address', []))} IPs across {len(locations)} locations.")
+    
+    # If no entities found, use titles
+    if not any([people, orgs, domains]):
+        top = [t for t in titles[:5] if not t.startswith("🔗")]
+        if top:
+            parts.append("Notable findings: " + "; ".join(top[:3]) + ".")
+    
+    # Detect themes from finding content (more thorough)
     theme_keywords = {
         "Regulatory / Legal": ["sanction", "fine", "settlement", "regulator", "sec", "cftc", "doj",
-                                "lawsuit", "indictment", "charged", "plead guilty", "convicted"],
+                                "lawsuit", "indictment", "charged", "plead guilty", "convicted",
+                                "class action", "arbitration", "court", "ruling", "securities"],
         "Corporate / Leadership": ["ceo", "founder", "executive", "board", "chairman", "director",
-                                    "resigned", "appointed", "named"],
-        "Financial": ["revenue", "profit", "loss", "billion", "million", "funding", "valuation"],
+                                    "resigned", "appointed", "named", "co-founder"],
+        "Financial": ["revenue", "profit", "loss", "billion", "million", "funding", "valuation",
+                      "stock", "share", "investor", "ipo", "acquisition"],
         "Crime / Investigation": ["criminal", "arrest", "prison", "jail", "fraud", "money laundering",
-                                   "investigation", "probe"],
+                                   "investigation", "probe", "allegation", "misconduct"],
+        "Infrastructure / Technical": ["dns", "ip address", "nameserver", "hosting", "cdn",
+                                        "subdomain", "resolves_to", "mx record"],
     }
     themes = []
-    all_titles_text = " ".join(titles).lower()
+    all_text = " ".join(titles + [getattr(f, "description", "") or "" for f in findings]).lower()
     for theme, keywords in theme_keywords.items():
-        if any(kw in all_titles_text for kw in keywords):
-            themes.append(theme)
+        matches = [kw for kw in keywords if kw in all_text]
+        if matches:
+            # Extract a relevant finding snippet
+            for f in findings:
+                desc = (getattr(f, "description", "") or "").lower()
+                title_l = (getattr(f, "title", "") or "").lower()
+                for kw in matches:
+                    if kw in title_l or kw in desc:
+                        themes.append({
+                            "theme": theme,
+                            "severity": "HIGH" if theme.startswith("Crime") else "MEDIUM",
+                            "summary": getattr(f, "title", "")[:200] or f"Evidence of {kw} found",
+                            "source_titles": [getattr(f, "title", "")[:100]],
+                        })
+                        break
+                if any(t["theme"] == theme for t in themes):
+                    break
+            else:
+                themes.append({
+                    "theme": theme,
+                    "severity": "MEDIUM",
+                    "summary": f"Keywords detected: {', '.join(matches[:4])}",
+                    "source_titles": [],
+                })
     
+    # Extract timeline events from findings (dates in titles/descriptions)
+    timeline_events: list[dict] = []
+    date_pattern = _re.compile(
+        r'\b((?:19|20)\d{2}(?:-(?:0[1-9]|1[0-2])(?:-(?:0[1-9]|[12]\d|3[01]))?)?)\b'
+    )
+    seen_dates: set[str] = set()
+    for f in findings:
+        title = getattr(f, "title", "") or ""
+        desc = getattr(f, "description", "") or ""
+        combined = f"{title} {desc}"
+        for m in date_pattern.finditer(combined):
+            d = m.group(1)
+            if d in seen_dates or len(d) < 4:
+                continue
+            seen_dates.add(d)
+            # Categorize
+            cat = "personal"
+            lower = combined.lower()
+            if any(kw in lower for kw in ("sentenced", "convicted", "arrested", "charged", "murder", "prison")):
+                cat = "criminal"
+            elif any(kw in lower for kw in ("lawsuit", "court", "trial", "ruling", "indictment")):
+                cat = "legal"
+            elif any(kw in lower for kw in ("ceo", "founder", "joined", "hired", "appointed", "director", "board")):
+                cat = "career"
+            elif any(kw in lower for kw in ("graduated", "university", "degree", "phd", "bachelor", "master")):
+                cat = "education"
+            elif any(kw in lower for kw in ("revenue", "funding", "ipo", "acquired", "valuation", "million", "billion")):
+                cat = "financial"
+            snippet = (title or desc)[:120]
+            timeline_events.append({
+                "date": d, "category": cat, "event": snippet,
+                "source_title": title[:100] if title else "",
+            })
+    timeline_events.sort(key=lambda e: e["date"])
+
     return {
-        "executive_summary": " ".join(summary_parts),
-        "risk_themes": [{"theme": t, "severity": "MEDIUM",
-                         "summary": "Detected in findings — review sources for details",
-                         "source_titles": []} for t in themes] if themes else [],
-        "notable_entities": [],
-        "evidence_gaps": ["LLM synthesis unavailable — themes detected from finding titles only. "
-                         "Re-run for full AI analysis."],
+        "executive_summary": " ".join(parts),
+        "risk_themes": themes if themes else [],
+        "notable_entities": [
+            {"name": v[0][:80], "type": k, "role": "discovered", "confidence": 0.7}
+            for k, vals in entities_found.items() for v in vals[:1]
+        ],
+        "timeline": timeline_events[:15],
+        "evidence_gaps": [],
         "recommended_next_steps": [{"entity": u, "action": "Review source", "tool_hint": "web"}
                                    for u in sources[:5]],
         "_synthesized": False,
         "_sources": sources[:15],
     }
+
+
+def _format_correlation(correlation: dict | None) -> str:
+    """Format cross-platform identity correlation for the synthesis prompt."""
+    if not correlation or not correlation.get("total_matches"):
+        return ""
+    lines = ["CROSS-PLATFORM IDENTITY CORRELATION:"]
+    lines.append(correlation.get("summary", ""))
+    confirmed = correlation.get("confirmed", [])
+    if confirmed:
+        lines.append("\nConfirmed matches (confidence ≥ 0.9):")
+        for m in confirmed[:3]:
+            lines.append(f"  • {m['finding_a'][:60]} ↔ {m['finding_b'][:60]}")
+            lines.append(f"    Signals: {', '.join(m['signals'])} | Confidence: {m['confidence']}")
+    probable = correlation.get("probable", [])
+    if probable:
+        lines.append("\nProbable matches (confidence ≥ 0.7):")
+        for m in probable[:3]:
+            lines.append(f"  • {m['finding_a'][:60]} ↔ {m['finding_b'][:60]}")
+    return "\n".join(lines)
 
 
 def brief_to_markdown(brief: dict, query: str) -> str:
@@ -509,6 +687,23 @@ def brief_to_markdown(brief: dict, query: str) -> str:
         out.append("## Notable Entities")
         for e in ents:
             out.append(f"- **{e.get('name','?')}** ({e.get('role','?')}): {e.get('context','')}")
+        out.append("")
+
+    timeline = brief.get("timeline", [])
+    if timeline:
+        out.append("## Timeline")
+        cat_icons = {
+            "criminal": "🔴", "legal": "⚖️", "career": "💼",
+            "education": "🎓", "personal": "👤", "financial": "💰",
+        }
+        for event in timeline:
+            icon = cat_icons.get(event.get("category", ""), "📌")
+            date = event.get("date", "?")
+            evt = event.get("event", "")
+            src = event.get("source_title", "")
+            out.append(f"- {icon} **{date}** — {evt}")
+            if src:
+                out.append(f"  *Source: {src[:120]}*")
         out.append("")
 
     gaps = brief.get("evidence_gaps", [])

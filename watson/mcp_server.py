@@ -24,11 +24,18 @@ from .graph import KnowledgeGraph
 # ── API Key Auth ──────────────────────────────────────────────────
 
 MCP_API_KEY = os.environ.get("MCP_API_KEY", "")
+MCP_READ_KEY = os.environ.get("MCP_READ_KEY", "")  # If set, read endpoints also require auth
 MCP_DEV_MODE = os.environ.get("WATSON_DEV", "") in ("1", "true", "yes")
 
 if not MCP_API_KEY and not MCP_DEV_MODE:
     print("⚠  WARNING: MCP_API_KEY not set. Write endpoints are BLOCKED (503).")
     print("   Set MCP_API_KEY env var to enable publishing, or WATSON_DEV=1 for dev mode.")
+
+if MCP_READ_KEY:
+    print("🔒 MCP_READ_KEY set — read endpoints require X-API-Key header.")
+else:
+    print("📖 MCP_READ_KEY not set — read endpoints are OPEN (public).")
+    print("   Set MCP_READ_KEY env var to require authentication for reads.")
 
 # ── Rate Limiting ───────────────────────────────────────────────
 
@@ -50,7 +57,8 @@ def _record_rate(key: str, count: int):
     _rate_window[key].extend([now] * count)
 
 async def api_key_middleware(request: Request, call_next):
-    """Require API key for write endpoints. Read endpoints are open.
+    """Require API key for write endpoints. Read endpoints are open
+    unless MCP_READ_KEY is set.
 
     If MCP_API_KEY is not set and not in dev mode, writes are blocked
     with a clear error message rather than silently allowing everything.
@@ -70,6 +78,17 @@ async def api_key_middleware(request: Request, call_next):
             return JSONResponse(
                 {"error": "unauthorized",
                  "detail": "Valid X-API-Key required for write operations"},
+                status_code=401,
+            )
+    elif MCP_READ_KEY and request.method == "GET":
+        key = request.headers.get("X-API-Key", "")
+        if key != MCP_READ_KEY:
+            # Also accept the write key for reads
+            if MCP_API_KEY and key == MCP_API_KEY:
+                return await call_next(request)
+            return JSONResponse(
+                {"error": "unauthorized",
+                 "detail": "Valid X-API-Key required for read operations (MCP_READ_KEY is set)"},
                 status_code=401,
             )
     return await call_next(request)
@@ -557,4 +576,26 @@ async def api_published():
     return {
         "cases": list(_published_cases.values()),
         "count": len(_published_cases),
+    }
+
+
+@mcp.delete("/api/cases/{case_id}")
+async def api_unpublish(case_id: str):
+    """Unpublish a case — remove its entities from the graph and
+    its metadata from the published index. Requires write API key."""
+    removed_entities = graph.remove_case(case_id)
+    was_published = case_id in _published_cases
+    
+    if was_published:
+        del _published_cases[case_id]
+        _save_published()
+    
+    if removed_entities == 0 and not was_published:
+        raise HTTPException(404, f"Case {case_id} not found in published index or graph")
+    
+    return {
+        "status": "unpublished",
+        "case_id": case_id,
+        "entities_removed": removed_entities,
+        "metadata_removed": was_published,
     }

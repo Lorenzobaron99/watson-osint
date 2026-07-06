@@ -82,7 +82,7 @@ export default function CaseBoard({
       const data = await response.json();
       if (data.error) {
         setDeepDiveReport(
-          `WATSON DIAGNOSTICS FAILURE:\n\n${data.error}\n\nEnsure DeepSeek API key configured in Settings.`
+          `WATSON DIAGNOSTICS FAILURE:\n\n${data.error}\n\nEnsure an LLM API key is configured in Settings → API Vault.`
         );
       } else {
         setDeepDiveReport(

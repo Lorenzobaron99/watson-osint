@@ -4,6 +4,7 @@ import { X, Key, Check, Shield, AlertTriangle } from "lucide-react";
 interface ApiKeyInfo {
   slug: string;
   label: string;
+  category?: string;
   description: string;
   get_key_url: string;
   env_var: string;
@@ -23,33 +24,37 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const [saved, setSaved] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
 
-  // LLM Provider — model-agnostic, defaults to DeepSeek
-  const LLM_PROVIDERS = {
-    deepseek: { label: "DeepSeek", placeholder: "sk-...", get_url: "https://platform.deepseek.com/api_keys", env: "DEEPSEEK_API_KEY" },
-    openai: { label: "OpenAI", placeholder: "sk-proj-...", get_url: "https://platform.openai.com/api-keys", env: "OPENAI_API_KEY" },
-    anthropic: { label: "Anthropic", placeholder: "sk-ant-...", get_url: "https://console.anthropic.com/keys", env: "ANTHROPIC_API_KEY" },
-    hermes: { label: "Hermes (local)", placeholder: "local-dev-key", get_url: "", env: "HERMES_API_KEY" },
-  } as const;
-  type ProviderKey = keyof typeof LLM_PROVIDERS;
-  const [llmProvider, setLlmProvider] = useState<ProviderKey>("deepseek");
+  // LLM Provider — read from backend's key registry (dynamic, not hardcoded)
+  const [llmProvider, setLlmProvider] = useState<string>(
+    localStorage.getItem("WATSON_LLM_PROVIDER") || ""
+  );
   const [llmKey, setLlmKey] = useState("");
+
+  // Build LLM provider list from keys with category="llm"
+  const llmProviders = keys.filter(k => k.category === "llm");
 
   useEffect(() => {
     if (!isOpen) return;
-    // Load saved LLM provider from localStorage
-    const savedProvider = localStorage.getItem("WATSON_LLM_PROVIDER") as ProviderKey | null;
-    if (savedProvider && savedProvider in LLM_PROVIDERS) setLlmProvider(savedProvider);
-    const savedKey = localStorage.getItem("WATSON_LLM_KEY") || "";
-    setLlmKey(savedKey);
-    
     fetch("/api/settings/keys")
       .then(r => r.json())
       .then(data => {
-        setKeys(data.keys || []);
+        const allKeys: ApiKeyInfo[] = data.keys || [];
+        setKeys(allKeys);
+        // Restore saved LLM provider from localStorage, or auto-detect first configured
+        const savedProvider = localStorage.getItem("WATSON_LLM_PROVIDER") || "";
+        if (savedProvider) {
+          setLlmProvider(savedProvider);
+        } else {
+          // Auto-detect: pick first LLM provider that has a configured key
+          const configuredLlm = allKeys.find(
+            (k: ApiKeyInfo) => k.category === "llm" && k.configured
+          );
+          if (configuredLlm) setLlmProvider(configuredLlm.slug);
+        }
+        const savedKey = localStorage.getItem("WATSON_LLM_KEY") || "";
+        setLlmKey(savedKey);
         const v: Record<string, string> = {};
-        (data.keys || []).forEach((k: ApiKeyInfo) => {
-          v[k.slug] = "";
-        });
+        allKeys.forEach((k: ApiKeyInfo) => { v[k.slug] = ""; });
         setValues(v);
         setLoading(false);
       })
@@ -78,13 +83,12 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const handleSaveLLM = async () => {
     localStorage.setItem("WATSON_LLM_PROVIDER", llmProvider);
     localStorage.setItem("WATSON_LLM_KEY", llmKey);
-    // Also save to server-side via the API keys endpoint
-    const provider = LLM_PROVIDERS[llmProvider];
+    // Save to server-side key store with the correct slug (provider name, not llm_ prefix)
     try {
       await fetch("/api/settings/keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slug: `llm_${llmProvider}`, value: llmKey }),
+        body: JSON.stringify({ slug: llmProvider, value: llmKey }),
       });
     } catch {}
     setSaved(prev => ({ ...prev, llm: true }));
@@ -133,13 +137,13 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             <label className="font-technical text-[10px] text-primary uppercase tracking-wider">LLM Provider — Reasoning Engine</label>
           </div>
           <div className="flex gap-2 mb-2">
-            <select value={llmProvider} onChange={e => setLlmProvider(e.target.value as ProviderKey)}
+            <select value={llmProvider} onChange={e => setLlmProvider(e.target.value)}
               className="bg-surface-dark border border-outline-variant/60 rounded p-2 text-[11px] font-technical text-primary focus:ring-1 focus:ring-primary focus:border-primary outline-none cursor-pointer">
-              {Object.entries(LLM_PROVIDERS).map(([key, p]) => (
-                <option key={key} value={key}>{p.label}</option>
+              {llmProviders.map(k => (
+                <option key={k.slug} value={k.slug}>{k.label}</option>
               ))}
             </select>
-            <input type="password" placeholder={LLM_PROVIDERS[llmProvider].placeholder}
+            <input type="password" placeholder="Paste your API key…"
               value={llmKey} onChange={e => setLlmKey(e.target.value)}
               className="flex-1 bg-surface-dark border border-outline-variant/60 rounded p-2 text-[11px] font-technical text-primary focus:ring-1 focus:ring-primary focus:border-primary outline-none" />
             <button type="button" onClick={handleSaveLLM}
@@ -148,9 +152,9 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             </button>
           </div>
           <p className="text-[9px] text-on-surface-variant">
-            Watson is provider-agnostic. DeepSeek is the default (cheapest). OpenAI, Anthropic, or local Hermes also work.
-            {LLM_PROVIDERS[llmProvider].get_url && (
-              <>{" "}<a href={LLM_PROVIDERS[llmProvider].get_url} target="_blank" className="text-primary hover:underline">Get a key →</a></>
+            Watson is provider-agnostic — choose any. DeepSeek offers a free tier. OpenAI, Anthropic, OpenRouter, or local Hermes all work.
+            {llmProviders.find(p => p.slug === llmProvider)?.get_key_url && (
+              <> <a href={llmProviders.find(p => p.slug === llmProvider)!.get_key_url} target="_blank" className="text-primary hover:underline">Get a key →</a></>
             )}
           </p>
         </div>

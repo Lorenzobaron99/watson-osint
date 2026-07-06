@@ -16,6 +16,40 @@ STORE_PATH = Path.home() / ".watson" / "api_keys.json"
 # ── Tool registry — all tools that accept API keys ─────────────
 
 TOOLS_NEEDING_KEYS = {
+    # ── LLM Providers (required for intelligence generation) ──
+    "deepseek": {
+        "label": "DeepSeek",
+        "env_var": "DEEPSEEK_API_KEY",
+        "get_key_url": "https://platform.deepseek.com/api_keys",
+        "description": "LLM provider — powers intelligence synthesis. Free tier available.",
+        "tier": "free",
+        "category": "llm",
+    },
+    "openai": {
+        "label": "OpenAI",
+        "env_var": "OPENAI_API_KEY",
+        "get_key_url": "https://platform.openai.com/api-keys",
+        "description": "LLM provider — GPT-4o for intelligence synthesis. Pay-as-you-go.",
+        "tier": "paid",
+        "category": "llm",
+    },
+    "anthropic": {
+        "label": "Anthropic",
+        "env_var": "ANTHROPIC_API_KEY",
+        "get_key_url": "https://console.anthropic.com/keys",
+        "description": "LLM provider — Claude for intelligence synthesis.",
+        "tier": "paid",
+        "category": "llm",
+    },
+    "openrouter": {
+        "label": "OpenRouter",
+        "env_var": "OPENROUTER_API_KEY",
+        "get_key_url": "https://openrouter.ai/keys",
+        "description": "LLM provider — multi-model gateway. Pay-as-you-go.",
+        "tier": "paid",
+        "category": "llm",
+    },
+    # ── OSINT Tool Providers ──
     "opencorporates": {
         "label": "OpenCorporates",
         "env_var": "OPENCORPORATES_API_KEY",
@@ -124,6 +158,7 @@ def list_keys() -> list[dict]:
         result.append({
             "slug": slug,
             "label": tool["label"],
+            "category": tool.get("category", "tool"),
             "description": tool["description"],
             "get_key_url": tool["get_key_url"],
             "env_var": tool["env_var"],

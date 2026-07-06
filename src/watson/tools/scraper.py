@@ -145,13 +145,50 @@ class ScraperTool(OSINTTool):
             html = _http_get(scraped_url)
 
             if html and "Wikipedia does not have an article" not in html:
+                # ── Guard against Wikipedia "did you mean?" redirects ──
+                # Wikipedia redirects /wiki/Gačanin → /wiki/Edin (name etymology).
+                # Check the page title contains the LAST name part (most distinctive).
+                # "Edin Gačanin" → page title must contain "gačanin", not just "edin".
+                title_match = re.search(r'<title>([^<]+)</title>', html, re.IGNORECASE)
+                page_title = self._strip_html(title_match.group(1)) if title_match else ""
+                page_title = re.sub(r'\s*[-–—]\s*Wikipedia\s*$', '', page_title, flags=re.IGNORECASE).strip()
+                title_lower = page_title.lower()
+                try_parts = [p.lower() for p in try_name.split() if len(p) >= 3]
+                if try_parts:
+                    # Must match the LAST name part (most distinctive).
+                    # ASCII-fold both sides — "gačanin" ↔ "gacanin" diacritic mismatch
+                    import unicodedata as _ucd
+                    _fold = lambda s: _ucd.normalize("NFKD", s).encode("ascii", "ignore").decode()
+                    last_folded = _fold(try_parts[-1])
+                    title_folded = _fold(title_lower)
+                    if last_folded not in title_folded:
+                        html = None
+                        continue
+                    # Secondary: reject Wikipedia search result pages
+                    is_search = (
+                        "mw-search-results" in html or
+                        "searchdidyoumean" in html.lower() or
+                        'id="mw-search-top-table"' in html or
+                        "may refer to:" in html[:2000].lower()
+                    )
+                    if is_search:
+                        html = None
+                        continue
                 break
             html = None
 
         if not html:
-            # Search fallback
-            search_url = f"https://en.wikipedia.org/wiki/Special:Search?search={urllib.parse.quote(name)}"
-            html = _http_get(search_url)
+            # Search fallback — use Wikipedia API for intelligent disambiguation.
+            # Avoids Wikipedia "did you mean?" redirects (e.g. /wiki/Gačanin → /wiki/Edin).
+            best_article = await self._wiki_api_search(name, parts)
+            if best_article:
+                scraped_url = f"https://en.wikipedia.org/wiki/{urllib.parse.quote(best_article.replace(' ', '_'))}"
+                html = _http_get(scraped_url)
+            
+            if not html:
+                # Last resort: raw search page HTML (keeps existing fallback)
+                search_url = f"https://en.wikipedia.org/wiki/Special:Search?search={urllib.parse.quote(name)}"
+                html = _http_get(search_url)
 
         if not html:
             return findings
@@ -221,6 +258,99 @@ class ScraperTool(OSINTTool):
                 )
 
         return findings
+
+    # ── Wikipedia API search with disambiguation ──────────────────
+
+    # Pages that are about words/names, not people — skip these.
+    _SKIP_TITLE_PATTERNS = [
+        r" \(name\)$", r" \(surname\)$", r" \(given name\)$",
+        r" \(disambiguation\)$", r" \(word\)$", r" \(term\)$",
+    ]
+    # Keywords that suggest the article is about crime/investigations —
+    # prefer these when ambiguous.
+    _CRIME_KEYWORDS = [
+        "organised crime", "organized crime", "cartel", "drug traffick",
+        "cocaine", "mafia", "gang", "sanction", "indict", "arrest",
+        "convict", "criminal", "crime", "trafficking", "smuggl",
+    ]
+
+    async def _wiki_api_search(self, name: str, parts: list[str]) -> str | None:
+        """Search Wikipedia API for the best article about this subject.
+
+        Tries both original and ASCII-folded versions of the name.
+        Skips disambiguation pages and name-etymology articles.
+        Prefers articles with crime/investigation keywords.
+        """
+        import unicodedata
+        import httpx
+
+        # Build search queries — original + ASCII-folded (no diacritics)
+        ascii_name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
+        queries = [name]
+        if ascii_name != name and len(ascii_name) >= 3:
+            queries.append(ascii_name)
+
+        for query in queries:
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    resp = await client.get(
+                        "https://en.wikipedia.org/w/api.php",
+                        params={
+                            "action": "query",
+                            "list": "search",
+                            "srsearch": query,
+                            "srlimit": 10,
+                            "format": "json",
+                        },
+                        headers={"User-Agent": "WatsonOSINT/1.0"},
+                    )
+                    if resp.status_code != 200:
+                        continue
+                    data = resp.json()
+            except Exception:
+                continue
+
+            results = data.get("query", {}).get("search", [])
+            if not results:
+                continue
+
+            # Score and filter results
+            candidates: list[tuple[int, str]] = []
+            for r in results:
+                title = r.get("title", "")
+                snippet = r.get("snippet", "")
+                combined = (title + " " + snippet).lower()
+
+                # Skip disambiguation / name-etymology pages
+                skip = False
+                for pat in self._SKIP_TITLE_PATTERNS:
+                    if re.search(pat, title, re.IGNORECASE):
+                        skip = True
+                        break
+                if skip:
+                    continue
+
+                # Check that at least one name part appears in the article
+                if parts and not any(p.lower() in combined for p in parts if len(p) > 2):
+                    continue
+
+                # Score: crime keywords → higher priority
+                score = 0
+                for kw in self._CRIME_KEYWORDS:
+                    if kw in combined:
+                        score += 10
+                # Penalize very short titles (likely generic)
+                if len(title) < 15:
+                    score -= 5
+
+                candidates.append((score, title))
+
+            if candidates:
+                # Sort by score descending, then pick best
+                candidates.sort(key=lambda x: x[0], reverse=True)
+                return candidates[0][1]
+
+        return None
 
     def _parse_infobox(self, html: str) -> dict[str, str]:
         """Parse Wikipedia infobox into key-value pairs."""
@@ -424,9 +554,11 @@ class ScraperTool(OSINTTool):
                     # while filtering Mohammad Ali Jafari (body: generic sanctions info).
                     aliases = self._derive_aliases(name)
                     body_has_alias = any(alias.lower() in body.lower() for alias in aliases)
-                    
-                    score = self._score_entity_relevance(title, "", name)
-                    if score < 0.50 and not body_has_alias:
+
+                    # Feed the body text into the scorer so it can check description tokens.
+                    # Previously passed "" which made desc-based token overlap useless.
+                    score = self._score_entity_relevance(title, body, name)
+                    if score < 0.35 and not body_has_alias:
                         filtered_out += 1
                         continue
 

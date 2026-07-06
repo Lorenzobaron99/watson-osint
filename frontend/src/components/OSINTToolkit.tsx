@@ -61,7 +61,7 @@ export default function OSINTToolkit({ onAddClue }: OSINTToolkitProps) {
           queryType,
           queryValue,
           timestamp: new Date().toLocaleTimeString(),
-          rawOutput: `=== WATSON OFFLINE ===\n\n[DIAGNOSTICS] No DeepSeek API key configured.\n\nWatson needs a DeepSeek API key to run investigations.\nConfigure it in Settings → API Vault.`,
+          rawOutput: `=== WATSON OFFLINE ===\n\n[DIAGNOSTICS] No LLM API key configured.\n\nWatson needs an LLM API key (DeepSeek, OpenAI, Anthropic, or local) to run investigations.\nConfigure it in Settings → API Vault.`,
           deductions: [
             "Local coordinate shows high correlation to the Grimpen Mire.",
             "Historical tax ledgers indicate active naturalist transactions.",

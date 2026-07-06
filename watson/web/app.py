@@ -49,6 +49,12 @@ app = FastAPI(
     version="0.3.0",
 )
 
+@app.on_event("startup")
+async def _bind_sse_loop():
+    """Bind the event loop to SSEManager so events can be enqueued
+    from worker threads via call_soon_threadsafe."""
+    sse.set_loop(asyncio.get_running_loop())
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -121,6 +127,22 @@ _mcp = _load_mcp_config()
 MCP_SERVER_URL = _mcp["url"]
 MCP_API_KEY = _mcp["key"]
 
+# ── Env loading (must be first — MCP server subprocess needs these vars) ──
+
+def _load_env():
+    env_path = os.path.expanduser("~/.hermes/.env")
+    if not os.path.exists(env_path):
+        return
+    with open(env_path) as f:
+        for line in f:
+            if "=" in line and not line.startswith("#"):
+                k, v = line.strip().split("=", 1)
+                k, v = k.strip(), v.strip().strip('"').strip("'")
+                if k and v and k not in os.environ:
+                    os.environ[k] = v
+
+_load_env()
+
 # ── Auto-start local MCP server ──────────────────────────────────
 
 def _start_mcp_server():
@@ -145,22 +167,6 @@ def _start_mcp_server():
 
 _start_mcp_server()
 
-# ── Env loading ──────────────────────────────────────────────────
-
-def _load_env():
-    env_path = os.path.expanduser("~/.hermes/.env")
-    if not os.path.exists(env_path):
-        return
-    with open(env_path) as f:
-        for line in f:
-            if "=" in line and not line.startswith("#"):
-                k, v = line.strip().split("=", 1)
-                k, v = k.strip(), v.strip().strip('"').strip("'")
-                if k and v and k not in os.environ:
-                    os.environ[k] = v
-
-_load_env()
-
 # ── Enterprise middleware ─────────────────────────────────────────
 
 from watson.web.middleware import init_app, register_task
@@ -169,13 +175,70 @@ init_app(app)  # Auth, rate limiting, structured logging, tracing, graceful shut
 
 logger = logging.getLogger("watson")
 
+import datetime as _dt
+
+
+def _json_default(obj):
+    """JSON default handler: datetime → ISO, everything else → truncated str."""
+    if isinstance(obj, _dt.datetime):
+        return obj.isoformat()
+    if isinstance(obj, _dt.date):
+        return obj.isoformat()
+    # Safety net — never let str() produce huge blobs
+    s = str(obj)
+    return s[:200] if len(s) > 200 else s
+
+
+_JSON_MAX_BYTES = 500_000  # 500 KB — drop events bigger than this
+
+
+def _safe_serialize(ev_type: str, ev_data: dict) -> tuple[bool, str]:
+    """Serialize event data to SSE-safe JSON. Returns (ok, sse_string).
+    
+    ok=False means serialization failed outright (exception during json.dumps).
+    ok=True with data starting with _TRUNCATED marker means the payload was
+    oversized and has been replaced with a stub.
+    """
+    try:
+        j = json.dumps(ev_data, default=_json_default)
+        if len(j) > _JSON_MAX_BYTES:
+            logger.warning(
+                "sse_event_too_large: type=%s size=%d — truncating", ev_type, len(j)
+            )
+            j = json.dumps({
+                "_truncated": True,
+                "_original_type": ev_type,
+                "_original_size": len(j),
+                "message": f"Event payload too large ({len(j)} bytes). "
+                           f"Full data available in saved case report.",
+            })
+        return True, f"event: {ev_type}\ndata: {j}\n\n"
+    except Exception as e:
+        logger.warning("sse_serialize_failed: type=%s error=%s", ev_type, e)
+        return False, f"event: error\ndata: {json.dumps({'message': 'Serialization failed'})}\n\n"
+
+
 # ── SSE helper (thread-safe) ─────────────────────────────────────
 
 class SSEManager:
-    """Per-client SSE event queues — thread-safe."""
+    """Per-client SSE event queues — thread-safe via call_soon_threadsafe.
+
+    asyncio.Queue produces events correctly when enqueued from the event loop
+    thread. Investigations run in a worker thread (asyncio.to_thread), so we
+    use loop.call_soon_threadsafe() to safely enqueue from any thread.
+
+    Previous approaches that failed:
+    - asyncio.Queue + put_nowait(): race condition corrupts the queue
+    - queue.Queue + run_in_executor(get): leaked threads poison event delivery
+      (stale blocked threads capture events meant for the active consumer)
+    """
     def __init__(self):
         self._queues: dict[str, asyncio.Queue] = {}
         self._lock = threading.Lock()
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    def set_loop(self, loop: asyncio.AbstractEventLoop):
+        self._loop = loop
 
     def create(self, client_id: str) -> asyncio.Queue:
         q = asyncio.Queue()
@@ -186,11 +249,18 @@ class SSEManager:
     def send(self, client_id: str, event: str, data: dict):
         with self._lock:
             q = self._queues.get(client_id)
-        if q:
-            try:
-                q.put_nowait((event, data))
-            except asyncio.QueueFull:
-                pass
+        if q and self._loop:
+            # ── Pre-serialize to catch bad data before it hits the stream ──
+            ok, _pre = _safe_serialize(event, data)
+            if ok:
+                # call_soon_threadsafe queues a callback to run put_nowait
+                # in the event loop thread — the only safe way to touch asyncio.Queue
+                # from a worker thread.
+                self._loop.call_soon_threadsafe(
+                    lambda q=q, item=(event, data): q.put_nowait(item)
+                )
+            else:
+                logger.warning("sse_dropped: type=%s — unserializable", event)
 
     def remove(self, client_id: str):
         with self._lock:
@@ -310,16 +380,37 @@ async def agent_investigate(req: InvestigateRequest):
     async def run():
         def push(event_type, data):
             sse.send(client_id, event_type, data)
+        # ── Mode-based hard timeout — prevents hung investigations from blocking server ──
+        _mode_timeouts = {
+            "background_check": 120,
+            "due_diligence": 420,
+            "deep_investigation": 900,
+            "twin_connection": 300,
+        }
+        _hard_timeout = _mode_timeouts.get(req.mode, 600)
         try:
             engine = get_engine()
             # Register interrupt queue for interactive steering
             engine.register_interrupt_queue(client_id)
-            result = await engine.investigate(
-                query=req.query,
-                focus=req.context,
-                on_event=push,
-                mode=req.mode,
-                save_mode="auto",  # Auto-save to disk — prevents 404 on save
+            # ── Run investigation in a dedicated thread so CPU-bound loops
+            # don't block the uvicorn event loop. The asyncio.wait_for timeout
+            # will fire even if the thread hangs. ──
+            def _run_sync():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    return loop.run_until_complete(engine.investigate(
+                        query=req.query,
+                        focus=req.context,
+                        on_event=push,
+                        mode=req.mode,
+                        save_mode="auto",
+                    ))
+                finally:
+                    loop.close()
+            result = await asyncio.wait_for(
+                asyncio.to_thread(_run_sync),
+                timeout=_hard_timeout,
             )
             
             # Send final report event with markdown
@@ -354,10 +445,24 @@ async def agent_investigate(req: InvestigateRequest):
                             for f in result["findings"]:
                                 if hasattr(f, 'tier') and f.tier in ("CONFIRMED", "PROBABLE"):
                                     for ent in getattr(f, 'entities', []):
+                                        # Normalize entities — they come in as strings, dicts, or objects
+                                        if isinstance(ent, str):
+                                            val, etype = ent.strip(), "unknown"
+                                        elif isinstance(ent, dict):
+                                            val = ent.get("value", ent.get("canonical", ""))
+                                            etype = ent.get("type", "unknown")
+                                        elif hasattr(ent, 'value'):
+                                            val = getattr(ent, 'value', '') or getattr(ent, 'canonical', '')
+                                            etype = getattr(ent, 'type', 'unknown')
+                                        else:
+                                            val, etype = str(ent), "unknown"
+                                        # Skip empty values — MCP validator rejects them
+                                        if not val or not val.strip():
+                                            continue
                                         entities.append({
-                                            "value": ent.get("value", str(ent)),
-                                            "type": ent.get("type", "unknown"),
-                                            "source": ent.get("source", ""),
+                                            "value": val.strip()[:500],
+                                            "type": etype or "unknown",
+                                            "source": ent.get("source", "") if isinstance(ent, dict) else "",
                                             "tier": f.tier if hasattr(f, 'tier') else "PROBABLE",
                                             "case_id": result["case_id"],
                                         })
@@ -398,6 +503,14 @@ async def agent_investigate(req: InvestigateRequest):
                 "findings": result["findings_count"],
                 "case": result["case_id"],
             })
+        except asyncio.TimeoutError:
+            logger.error("investigation_timeout", extra={
+                "client_id": client_id, "query": req.query[:80],
+                "mode": req.mode,
+            })
+            sse.send(client_id, "error", {
+                "message": f"Investigation timed out after {_hard_timeout}s — try a shallower mode or narrower query"
+            })
         except Exception as e:
             logger.error("investigation_failed", extra={
                 "client_id": client_id, "query": req.query[:80], "error": str(e),
@@ -430,7 +543,8 @@ async def agent_stream(client_id: str):
             while True:
                 try:
                     ev_type, ev_data = await asyncio.wait_for(q.get(), timeout=30.0)
-                    yield f"event: {ev_type}\ndata: {json.dumps(ev_data, default=str)}\n\n"
+                    _ok, sse_str = _safe_serialize(ev_type, ev_data)
+                    yield sse_str
                     if ev_type == "_close":
                         break
                 except asyncio.TimeoutError:
@@ -1040,13 +1154,16 @@ async def save_case(case_id: str, req: SaveRequest = SaveRequest()):
     
     report = None
     already_saved = False
+    matches: list = []  # populated when case found on disk
     
     if hasattr(engine, '_pending_reports') and case_id in engine._pending_reports:
         report = engine._pending_reports[case_id]
     else:
         # Check if already saved to disk (auto-save mode)
-        case_path = Path.home() / "watson-cases" / f"{case_id}.md"
-        if case_path.exists():
+        # _save_case writes "{case_id}_{date}.md" — glob for it
+        cases_dir = Path.home() / "watson-cases"
+        matches = list(cases_dir.glob(f"{case_id}_*.md")) if cases_dir.exists() else []
+        if matches:
             already_saved = True
         else:
             raise HTTPException(404, 
@@ -1067,7 +1184,8 @@ async def save_case(case_id: str, req: SaveRequest = SaveRequest()):
             ok, err = _publish_to_mcp(report)
         elif already_saved:
             # Reconstruct from disk for publishing
-            case_path = Path.home() / "watson-cases" / f"{case_id}.md"
+            # _save_case writes "{case_id}_{date}.md" — use first glob match
+            case_path = matches[0]
             text = case_path.read_text()
             from src.watson.orchestration.engine import OrchestrationEngine
             entities = OrchestrationEngine._extract_entities_from_text(text)
@@ -1405,3 +1523,128 @@ async def delete_api_key(slug: str):
     from watson.api_keys import delete_key
     delete_key(slug)
     return {"status": "ok", "slug": slug, "configured": False}
+
+
+# ── Enterprise Exports ──────────────────────────────────────────
+
+@app.get("/api/export/stix/{case_id}")
+async def export_stix_endpoint(case_id: str):
+    """Export a completed investigation as STIX 2.1 JSON bundle."""
+    from pathlib import Path
+    case_path = Path.home() / "watson-cases" / f"{case_id}.md"
+    if not case_path.exists():
+        # Try case_id with date suffix (CASE-XXX_YYYY-MM-DD)
+        matches = list((Path.home() / "watson-cases").glob(f"{case_id}*.md"))
+        if matches:
+            case_path = matches[0]
+        else:
+            raise HTTPException(404, f"Case {case_id} not found")
+
+    try:
+        from watson.serializers.stix import export_stix
+        # Parse minimal info from case filename
+        import re
+        content = case_path.read_text()
+        query_match = re.search(r'\*\*Target:\*\*\s*(.+?)$', content, re.MULTILINE)
+        target_match = re.search(r'\*\*Target Type:\*\*\s*(.+?)$', content, re.MULTILINE)
+        query = query_match.group(1).strip() if query_match else case_id
+        target_type = target_match.group(1).strip() if target_match else "unknown"
+
+        # Build minimal findings from markdown
+        findings = _parse_findings_from_markdown(content)
+
+        bundle, _ = export_stix(
+            query=query,
+            case_id=case_id,
+            target_type=target_type,
+            findings=findings,
+        )
+        return JSONResponse(content=bundle, media_type="application/json")
+    except Exception as e:
+        raise HTTPException(500, f"STIX export failed: {e}")
+
+
+@app.get("/api/opsec/stats")
+async def opsec_stats():
+    """OpSec proxy firewall statistics."""
+    try:
+        from watson.opsec import get_opsec_client
+        client = get_opsec_client()
+        return client.stats()
+    except Exception as e:
+        return {"status": "unavailable", "error": str(e)}
+
+
+# ── SPA fallback — serve React app for all non-API routes ──────────
+
+@app.get("/{full_path:path}", response_class=HTMLResponse)
+async def spa_fallback(full_path: str):
+    """Serve the React SPA for all client-side routes.
+    
+    Every URL that isn't an explicit API endpoint or static file
+    returns index.html so React Router can handle it client-side.
+    """
+    # Don't intercept API routes (shouldn't reach here if registered first, but safety)
+    if full_path.startswith("api/"):
+        raise HTTPException(404)
+    index = STATIC_DIR / "index.html"
+    if index.exists():
+        return HTMLResponse(content=index.read_text(), headers=_NO_CACHE)
+    return HTMLResponse(
+        "<h1>Watson — run <code>cd frontend && npm run build</code></h1>",
+        status_code=404,
+    )
+
+
+def _parse_findings_from_markdown(content: str) -> list:
+    """Parse findings from a Watson markdown report for STIX export."""
+    import re
+    findings = []
+
+    # Find "Key Findings" section
+    key_section = re.search(r'## Key Findings\s*\n(.*?)(?=\n## |\Z)', content, re.DOTALL)
+    if not key_section:
+        return findings
+
+    # Parse individual finding lines (bullet points with tier icons)
+    finding_pattern = re.compile(
+        r'-\s*(?:🟢|🟡|🟠|🔴|⚪)\s*\*\*(.+?)\*\*\s*\[(.+?)\]\s*\((\d+)% confidence\)\s*\n'
+        r'\s*(.+?)(?=\n\s*(?:Source:|$))(?:\n\s*Source:\s*(.+?))?(?=\n- |\n## |\Z)',
+        re.DOTALL,
+    )
+
+    for m in finding_pattern.finditer(key_section.group(1)):
+        title = m.group(1).strip()
+        src_tier = m.group(2).strip()
+        confidence_str = m.group(3)
+        desc = m.group(4).strip()
+        source_url = m.group(5).strip() if m.group(5) else ""
+
+        # Map source tier to Watson tier
+        tier_map = {"PRIMARY": "CONFIRMED", "SECONDARY": "PROBABLE",
+                     "TERTIARY": "POSSIBLE"}
+        tier = tier_map.get(src_tier, "POSSIBLE")
+
+        findings.append(SimpleFinding(
+            title=title,
+            description=desc[:500],
+            tier=tier,
+            source_url=source_url,
+            source_type="osint",
+            confidence=int(confidence_str) / 100,
+        ))
+
+    return findings
+
+
+class SimpleFinding:
+    """Minimal finding object for STIX export from markdown."""
+    def __init__(self, title, description, tier, source_url, source_type, confidence):
+        self.id = str(abs(hash(title)) % (10**12))
+        self.title = title
+        self.description = description
+        self.tier = tier
+        self.source_url = source_url
+        self.source_type = source_type
+        self.confidence = confidence
+        self.entities = []

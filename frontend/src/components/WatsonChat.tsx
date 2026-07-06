@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from "react";
 import {
   Send, Trash2, Bot, User, RefreshCw, X, Paperclip,
-  AlertCircle, Search, FileText,
+  AlertCircle, Search, FileText, ChevronDown, ChevronUp,
 } from "lucide-react";
 import { SSEFinding, SSEBrief, SSETargetProfile, BriefEntity } from "../types";
+import EntityGraph, { GraphEntity, GraphRelation } from "./EntityGraph";
 
 const SHERLOCK_QUOTES = [
   '"It is a capital mistake to theorize before one has data."',
@@ -54,11 +55,13 @@ export default function WatsonChat({
   onBriefEntities,
   twinQuery,
   onTwinComplete,
+  onGraphData,
 }: { 
   onFindings?: (findings: SSEFinding[]) => void;
   onBriefEntities?: (entities: BriefEntity[]) => void;
   twinQuery?: string | null;
   onTwinComplete?: () => void;
+  onGraphData?: (data: { entities: any[]; relations: any[] }) => void;
 }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState("");
@@ -76,7 +79,18 @@ export default function WatsonChat({
   const [graphStatus, setGraphStatus] = useState<{
     connected: boolean; configured: boolean; reason: string;
   }>({ connected: false, configured: false, reason: "Checking..." });
+  const [graphEntities, setGraphEntities] = useState<GraphEntity[]>([]);
+  const [graphRelations, setGraphRelations] = useState<GraphRelation[]>([]);
+  const [graphExpanded, setGraphExpanded] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const activeEventSourceRef = useRef<EventSource | null>(null);
+
+  // Cleanup SSE on unmount
+  useEffect(() => {
+    return () => {
+      activeEventSourceRef.current?.close();
+    };
+  }, []);
 
   // Check graph connection on mount
   useEffect(() => {
@@ -230,10 +244,14 @@ export default function WatsonChat({
       let markdown = "";
 
       await new Promise<void>((resolve, reject) => {
+        // Close any previous investigation stream
+        activeEventSourceRef.current?.close();
         const es = new EventSource(`/api/agent/stream/${cid}`);
+        activeEventSourceRef.current = es;
 
         const timeout = setTimeout(() => {
           es.close();
+          activeEventSourceRef.current = null;
           reject(new Error("Investigation timed out after 600s (10 minutes)"));
         }, 600000);
 
@@ -343,6 +361,34 @@ export default function WatsonChat({
           } catch {}
         });
 
+        // ── Watson entity graph — live visualization ──
+
+        es.addEventListener("graph_entities", (ev: MessageEvent) => {
+          try {
+            const d = JSON.parse(ev.data);
+            const ents: GraphEntity[] = d.entities || [];
+            setGraphEntities(ents);
+            setGraphRelations(prev => {
+              if (onGraphData) onGraphData({ entities: ents, relations: prev });
+              return prev;
+            });
+            setProgressLog(prev => [...prev, `  🔗 ${d.total} entities mapped in graph`]);
+          } catch {}
+        });
+
+        es.addEventListener("graph_relations", (ev: MessageEvent) => {
+          try {
+            const d = JSON.parse(ev.data);
+            const rels: GraphRelation[] = d.relations || [];
+            setGraphRelations(rels);
+            setGraphEntities(prev => {
+              if (onGraphData) onGraphData({ entities: prev, relations: rels });
+              return prev;
+            });
+            setProgressLog(prev => [...prev, `  ➰ ${d.total} relationships discovered`]);
+          } catch {}
+        });
+
         es.addEventListener("investigation_complete", (ev) => {
           try {
             const d = JSON.parse((ev as MessageEvent).data);
@@ -357,6 +403,7 @@ export default function WatsonChat({
         es.addEventListener("error", (ev) => {
           clearTimeout(timeout);
           es.close();
+          activeEventSourceRef.current = null;
           try {
             const d = JSON.parse((ev as MessageEvent).data);
             reject(new Error(d.message || "Stream error"));
@@ -368,6 +415,7 @@ export default function WatsonChat({
         es.addEventListener("_close", () => {
           clearTimeout(timeout);
           es.close();
+          activeEventSourceRef.current = null;
           resolve();
         });
       });
@@ -709,6 +757,37 @@ export default function WatsonChat({
 
           <div ref={messagesEndRef} />
         </div>
+
+        {/* ── Entity Graph Panel (appears during/after investigation) ── */}
+        {graphEntities.length > 0 && (
+          <div className="border-t border-outline-variant/40 bg-surface-container-low/50">
+            <div
+              className="flex items-center justify-between px-4 py-2 cursor-pointer hover:bg-surface-container/50 transition-colors"
+              onClick={() => setGraphExpanded(!graphExpanded)}
+            >
+              <div className="flex items-center gap-2">
+                <span className="font-technical text-[10px] text-primary uppercase tracking-wider">
+                  Entity Graph
+                </span>
+                <span className="font-technical text-[9px] text-on-surface-variant">
+                  {graphEntities.length} entities · {graphRelations.length} relations
+                </span>
+              </div>
+              <button className="text-on-surface-variant hover:text-primary">
+                {graphExpanded ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+              </button>
+            </div>
+            {graphExpanded && (
+              <div className="px-4 pb-3">
+                <EntityGraph
+                  entities={graphEntities}
+                  relations={graphRelations}
+                  compact
+                />
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Input */}
         <form onSubmit={handleInvestigate} className="p-3 bg-surface-container-low border-t border-outline-variant flex items-center gap-2">

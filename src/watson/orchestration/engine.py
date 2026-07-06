@@ -256,7 +256,7 @@ class Finding:
 
     @property
     def tier(self) -> str:
-        if self.confidence >= 0.90:
+        if self.confidence >= 0.85:
             return "CONFIRMED"
         if self.confidence >= 0.70:
             return "PROBABLE"
@@ -297,6 +297,8 @@ class InvestigationReport:
     phases_completed: list[str] = field(default_factory=list)
     verifiability_score: float = 0.0
     graph_context: dict = field(default_factory=dict)  # Known entities from community graph pre-check
+    stix_bundle: dict | None = None  # STIX 2.1 bundle from serialization phase
+    stix_path: str | None = None  # Path to saved STIX JSON file
 
 
 # ── SSE Emitter ────────────────────────────────────────────────
@@ -611,6 +613,7 @@ class OrchestrationEngine:
         self._should_stop = False
         self._skip_phases: set[str] = set()  # Phases to skip
         self._person_escalated = False  # True when criminal indicators trigger full deep
+        self._focus_corrected = False  # True when target validation corrected the query
 
     def _check_person_escalation(self, findings: list[Finding]) -> bool:
         """Check if person target findings contain criminal/legal indicators.
@@ -855,7 +858,29 @@ class OrchestrationEngine:
         sse.progress("surface", f"Surface collection — targeting: {query}")
         surface_findings = await self._phase_surface(query, profile, sse)
         report.findings.extend(surface_findings)
+        report.findings = self._filter_quality(report.findings, query=report.query)
         report.phases_completed.append("surface")
+
+        # ── Target validation: did we investigate the RIGHT person? ──
+        if not self._focus_corrected and mode != "twin_connection":
+            corrected = await self._validate_target_focus(
+                query, profile.primary_name, surface_findings, sse)
+            if corrected:
+                self._focus_corrected = True
+                # Keep the pre-correction findings as context, don't discard
+                prior_count = len(surface_findings)
+                # Re-run surface with corrected target
+                sse.progress("surface", 
+                    f"→ Re-running surface collection with corrected target: {corrected}")
+                corrected_findings = await self._phase_surface(corrected, profile, sse)
+                # Merge: corrected findings first, then original (as supplementary)
+                surface_findings = corrected_findings + surface_findings
+                report.findings = corrected_findings + report.findings
+                sse.progress("surface",
+                    f"→ Corrected: {len(corrected_findings)} new findings for '{corrected}' "
+                    f"(+ {prior_count} prior findings retained as context)")
+                # Update profile so downstream phases use the corrected name
+                profile.primary_name = corrected
 
         # Check for person escalation — criminal/legal indicators trigger full deep investigation
         if profile.target_type == "person" and self._check_person_escalation(surface_findings):
@@ -865,6 +890,24 @@ class OrchestrationEngine:
         await self._check_interrupts(sse)
         if self._should_stop:
             return self._finalize_early(report, sse, "stopped_after_surface")
+
+        # ── Graph Enrichment: Maltego-style entity discovery ──
+        # For ALL target types (including person), run the entity graph + transform
+        # engine to discover infrastructure (subdomains, IPs, geolocation,
+        # emails) that the surface phase may have missed. Person targets
+        # benefit from domain→email→person→org chain when surface findings
+        # contain URLs/domains associated with the target.
+        # Publisher/noise filter prevents news sites from polluting the graph.
+        graph_enrich_findings = await self._run_graph_enrichment(
+            surface_findings, query, profile, sse,
+            target_types=["domain", "company", "organization", "person", "email"],
+        )
+        if graph_enrich_findings:
+            report.findings.extend(graph_enrich_findings)
+            sse.progress(
+                "surface",
+                f"→ Graph enrichment: {len(graph_enrich_findings)} new discoveries",
+            )
 
         # Phase 3: Identifier pivoting
         # Email targets: skip generic pivot — identity search runs in Phase 2 (surface).
@@ -876,6 +919,7 @@ class OrchestrationEngine:
             pivot_context = self._findings_context(surface_findings)
             pivot_findings = await self._phase_pivot(query, profile, pivot_context, sse)
             report.findings.extend(pivot_findings)
+            report.findings = self._filter_quality(report.findings, query=report.query)
             report.phases_completed.append("pivot")
         else:
             sse.progress("pivot", "⏭ Skipping pivot (user requested)")
@@ -891,13 +935,47 @@ class OrchestrationEngine:
             all_context = self._findings_context(report.findings)
             deep_findings = await self._phase_deep(query, profile, all_context, sse)
             report.findings.extend(deep_findings)
+            report.findings = self._filter_quality(report.findings, query=report.query)
             report.phases_completed.append("deep")
+
+            # ── OpenSanctions auto-pivot: discovered names → structured sanctions ──
+            # Person investigations often discover full names during DDG search that
+            # weren't in the original query (e.g. "Volodymyr Viktorovych" → discovers
+            # "Volodymyr Viktorovych Tymoshchuk"). Re-run OpenSanctions with each
+            # discovered name to get structured sanctions data (schema, datasets, topics).
+            if profile.target_type == "person":
+                os_pivot_findings = await self._auto_pivot_opensanctions(
+                    report.findings, query, profile.primary_name, sse
+                )
+                if os_pivot_findings:
+                    report.findings.extend(os_pivot_findings)
+                    report.findings = self._filter_quality(report.findings, query=report.query)
+                    sse.progress(
+                        "deep",
+                        f"→ OpenSanctions auto-pivot: {len(os_pivot_findings)} findings from discovered names",
+                    )
         else:
             sse.progress("deep", "⏭ Skipping deep investigation (user requested)")
 
         await self._check_interrupts(sse)
         if self._should_stop:
             return self._finalize_early(report, sse, "stopped_after_deep")
+
+        # ── Post-Deep Graph Enrichment: extract entities from ALL findings ──
+        # For person targets in deep modes, the deep phase may have discovered
+        # associated organizations, domains, or emails (foundations, shell companies,
+        # properties). Run the graph engine on accumulated findings to discover
+        # infrastructure and reverse-pivot to additional people/orgs.
+        post_deep_graph = await self._run_graph_enrichment(
+            report.findings, query, profile, sse,
+            target_types=None,  # ALL target types eligible post-deep
+        )
+        if post_deep_graph:
+            report.findings.extend(post_deep_graph)
+            sse.progress(
+                "deep",
+                f"→ Post-deep graph enrichment: {len(post_deep_graph)} new discoveries from accumulated findings",
+            )
 
         # Phase 5: Dark web (deep_investigation only)
         # NOTE: person_skip_dark defined for the elif chain below
@@ -912,6 +990,7 @@ class OrchestrationEngine:
             sse.progress("dark", "⚠️ Escalating: dark web indicators detected")
             dark_findings = await self._phase_dark(query, profile, all_context, sse)
             report.findings.extend(dark_findings)
+            report.findings = self._filter_quality(report.findings, query=report.query)
             report.phases_completed.append("dark")
         else:
             sse.progress("dark", "No dark web indicators — skipping escalation")
@@ -920,10 +999,18 @@ class OrchestrationEngine:
         if self._should_stop:
             return self._finalize_early(report, sse, "stopped_after_dark")
 
+        # Phase 5.5: Cross-platform identity correlation (person/email only)
+        # Chains email→LinkedIn→phone→address by cross-referencing signals
+        # across findings. Produces confidence-scored identity clusters.
+        correlation = None
+        if profile.target_type in ("person", "email") and report.findings:
+            sse.progress("correlate", "Cross-platform identity correlation…")
+            correlation = self._correlate_identity(report.findings, query, sse)
+
         # Phase 6: Analyze — cross-reference + entity resolution + synthesis
         if "analyze" not in self._skip_phases:
             sse.progress("analyze", "Cross-referencing, resolving entities, synthesizing…")
-            brief = await self._phase_analyze(query, focus, report.findings, sse, report.target_type, report.graph_context)
+            brief = await self._phase_analyze(query, focus, report.findings, sse, report.target_type, report.graph_context, correlation)
             report.brief = brief or {}
         else:
             sse.progress("analyze", "⏭ Skipping analysis (user requested)")
@@ -940,6 +1027,7 @@ class OrchestrationEngine:
                 gap_findings = await self._phase_fill_gaps(query, focus, gaps[:3], sse)
                 if gap_findings:
                     report.findings.extend(gap_findings)
+                    report.findings = self._filter_quality(report.findings, query=report.query)
                     sse.progress("gaps", f"→ {len(gap_findings)} new findings from gap filling")
                     # Re-synthesize with new findings
                     try:
@@ -953,23 +1041,90 @@ class OrchestrationEngine:
         if self._should_stop:
             return self._finalize_early(report, sse, "stopped_after_analyze")
 
+        # Phase 6.6: LLM Verification — second-pass false-positive filter
+        # Runs after gap filling (which may have added new findings) and before
+        # the final report. Each finding is re-examined; hallucinated or
+        # unverifiable findings are dropped or downgraded.
+        if "verify" not in self._skip_phases:
+            sse.progress("verify", "Verifying findings — second-pass LLM audit…")
+            try:
+                from watson.verification import create_verifier
+                verifier = create_verifier()
+                if verifier:
+                    verifications = await verifier.verify(report.findings, query)
+                    if not verifications:
+                        verifications = []
+                    dropped = 0
+                    kept = []
+                    # Build lookup map safely
+                    vmap: dict = {}
+                    for v in verifications:
+                        fid = v.get("finding_id", "")
+                        if fid:
+                            vmap[fid] = v
+                    for finding in report.findings:
+                        try:
+                            finding_id = getattr(finding, "id", str(id(finding))[:12])
+                            v = vmap.get(finding_id)
+                            if v:
+                                finding, was_dropped = verifier.apply(finding, v)
+                                if was_dropped:
+                                    dropped += 1
+                                    continue
+                        except Exception as ve:
+                            logger.warning("verify_apply_failed: finding=%s error=%s", getattr(finding, "id", "?"), ve)
+                        kept.append(finding)
+                    report.findings = kept
+                    if dropped:
+                        sse.progress("verify", f"→ Dropped {dropped} unverifiable findings, {len(kept)} passed")
+                    else:
+                        sse.progress("verify", f"→ {len(kept)} findings verified — all passed")
+                else:
+                    sse.progress("verify", "⏭ Verification skipped (LLM unavailable)")
+            except Exception as e:
+                logger.warning("verification_phase_failed: %s", e)
+                sse.progress("verify", f"⚠ Verification skipped ({e})")
+        else:
+            sse.progress("verify", "⏭ Skipping verification (user requested)")
+
+        # Phase 6.7: STIX 2.1 Serialization — enterprise structured output
+        if "stix" not in self._skip_phases:
+            sse.progress("stix", "Producing STIX 2.1 bundle…")
+            try:
+                from watson.serializers.stix import export_stix
+                stix_bundle, stix_path = export_stix(
+                    query=query,
+                    case_id=report.case_id,
+                    target_type=report.target_type,
+                    findings=report.findings,
+                    entities=report.entities if hasattr(report, 'entities') else None,
+                    brief=report.brief,
+                )
+                report.stix_bundle = stix_bundle
+                report.stix_path = str(stix_path) if stix_path else None
+                obj_count = len(stix_bundle.get("objects", []))
+                sse.emit("stix_bundle", {
+                    "case_id": report.case_id,
+                    "objects": obj_count,
+                    "spec_version": "2.1",
+                })
+                sse.progress("stix", f"→ STIX 2.1 bundle: {obj_count} objects")
+            except Exception as e:
+                logger.warning("stix_serialization_failed: %s", e)
+                sse.progress("stix", f"⚠ STIX skipped ({e})")
+        else:
+            sse.progress("stix", "⏭ Skipping STIX (user requested)")
+
         # Phase 7: Report
         sse.progress("report", "Generating intelligence report…")
         # ── Global quality filter: strip tool-generated garbage ──
-        report.findings = self._filter_quality(report.findings)
+        report.findings = self._filter_quality(report.findings, query=report.query)
         markdown = self._phase_report(report)
         report.markdown = markdown
 
-        # Save to disk / knowledge graph (only if auto mode)
-        if save_mode == "auto":
-            self._save_case(report)
-            self._update_graph(report)
-        else:
-            # Store in pending for later approval
-            if not hasattr(self, '_pending_reports'):
-                self._pending_reports = {}
-            self._pending_reports[report.case_id] = report
-
+        # Notify frontend IMMEDIATELY — graph operations (O(N²) relations
+        # + MCP publish) can take 30+ seconds and block the SSE stream,
+        # making the frontend appear "stuck" at "generating report".
         sse.emit("investigation_complete", {
             "case_id": report.case_id,
             "mode": mode,
@@ -981,7 +1136,26 @@ class OrchestrationEngine:
             "brief": brief,
             "markdown": markdown,
             "phases": report.phases_completed,
+            "stix_available": report.stix_bundle is not None,
+            "stix_objects": len(report.stix_bundle.get("objects", [])) if report.stix_bundle else 0,
         })
+
+        # Save to disk / knowledge graph — offload to background thread
+        # so the engine returns immediately after notifying the frontend.
+        # _update_graph does O(N²) relation writes + MCP HTTP publish that
+        # can block for minutes on large investigations.
+        if save_mode == "auto":
+            import threading
+            threading.Thread(
+                target=self._save_and_update_graph,
+                args=(report,),
+                daemon=True,
+            ).start()
+        else:
+            # Store in pending for later approval
+            if not hasattr(self, '_pending_reports'):
+                self._pending_reports = {}
+            self._pending_reports[report.case_id] = report
 
         return {
             "case_id": report.case_id,
@@ -1463,6 +1637,76 @@ class OrchestrationEngine:
         )
         return profile
 
+    # ── Target Validation —─────────────────────────────────────
+    # After surface collection, verify we investigated the RIGHT target.
+    # Prevents the class of bugs where regex extraction grabs the wrong name
+    # (e.g., "Massimo Bossetti Italian" → falls back to "Yara Gambirasio").
+    # LLM checks: do the findings match the original query intent?
+
+    async def _validate_target_focus(
+        self, original_query: str, primary_name: str,
+        surface_findings: list[Finding], sse: SSEEmitter,
+    ) -> str | None:
+        """Validate that surface findings address the intended target.
+        
+        Returns corrected query string if the target was wrong, None if correct.
+        Max 10s timeout, 200 tokens — cheap checkpoint.
+        """
+        # Build a minimal findings summary
+        titles = []
+        for f in surface_findings[:12]:  # top 12 is enough
+            source = ""
+            if f.source_url:
+                try:
+                    from urllib.parse import urlparse
+                    source = urlparse(f.source_url).netloc.replace("www.", "")
+                except Exception:
+                    pass
+            titles.append(f"- {f.title[:120]} ({source})" if source else f"- {f.title[:120]}")
+        
+        summaries = "\n".join(titles) if titles else "(no findings)"
+
+        prompt = f"""ORIGINAL QUERY: {original_query}
+WATSON SEARCHED FOR: {primary_name}
+
+SURFACE FINDINGS SUMMARY:
+{summaries}
+
+QUESTION: Do these findings investigate "{original_query}" (the intended target), 
+or did Watson investigate a different person/entity by mistake?
+Reply with ONE line:
+- "CORRECT" if the findings address the right target
+- "WRONG: <corrected search term>" if we investigated the wrong entity
+
+Examples:
+- Query="Massimo Bossetti Italian murderer Yara Gambirasio case", searched "Yara Gambirasio" → WRONG: Massimo Bossetti
+- Query="Elon Musk Twitter CEO", searched "Elon Musk" → CORRECT
+- Query="CEO of Binance", searched "Changpeng Zhao" → CORRECT"""
+
+        try:
+            from .llm_config import call_llm as _call_llm
+            response = await asyncio.wait_for(
+                _call_llm(prompt, timeout=10, max_tokens=200),
+                timeout=12,
+            )
+            if not response:
+                return None
+            
+            response = response.strip()
+            if response.upper().startswith("CORRECT"):
+                return None
+            if response.upper().startswith("WRONG:"):
+                corrected = response.split(":", 1)[1].strip()
+                if corrected and corrected != primary_name:
+                    sse.progress("surface",
+                        f"🔄 Target correction: '{primary_name}' → '{corrected}' "
+                        f"(findings were about the wrong entity)")
+                    return corrected
+        except (asyncio.TimeoutError, Exception) as e:
+            logger.debug("target_validation_failed: %s", e)
+        
+        return None
+
     # ── Phase 2: Surface Collection ───────────────────────────
 
     async def _phase_surface(self, query: str, profile, sse: SSEEmitter) -> list[Finding]:
@@ -1761,11 +2005,36 @@ class OrchestrationEngine:
             try:
                 from ddgs import DDGS
                 person_name = profile.primary_name or query
-                social_queries = [
-                    f'"{person_name}" linkedin',
-                    f'"{person_name}" twitter OR x.com',
-                    f'"{person_name}" instagram',
-                ]
+                # ── Common-name guard: skip generic LinkedIn/Instagram for short names ──
+                # "Charles Taylor" → 3200+ LinkedIn profiles, all wrong person.
+                # Only trigger for names with common Western first/given names.
+                COMMON_FIRST_NAMES = {
+                    "john", "jane", "michael", "maria", "james", "sarah", "david", "lisa",
+                    "robert", "emma", "william", "anna", "thomas", "olivia", "daniel",
+                    "matthew", "andrew", "ryan", "joshua", "christopher", "nicholas",
+                    "anthony", "benjamin", "samuel", "jacob", "joseph", "charles", "mark",
+                    "paul", "steven", "richard", "george", "peter", "simon", "edward",
+                    "frank", "henry", "stephen", "philip", "patrick", "alexander",
+                }
+                name_parts = person_name.split()
+                is_common_name = (
+                    len(name_parts) == 2
+                    and name_parts[0].lower() in COMMON_FIRST_NAMES
+                    and len(name_parts[1]) < 12
+                )
+                if is_common_name:
+                    sse.progress("surface", f"  ⚠ Common name detected — skipping social queries for '{person_name}' to avoid noise")
+                    # For common names (2 short words), generic LinkedIn/Instagram searches
+                    # return thousands of wrong people. Skip and rely on Wikipedia + identity tools.
+                    social_queries = [
+                        f'"{person_name}" wikipedia',
+                    ]
+                else:
+                    social_queries = [
+                        f'"{person_name}" linkedin',
+                        f'"{person_name}" twitter OR x.com',
+                        f'"{person_name}" instagram',
+                    ]
                 def _social_search(q):
                     try:
                         with DDGS() as ddgs:
@@ -1854,6 +2123,293 @@ class OrchestrationEngine:
         all_findings = tool_findings + llm_findings
         sse.phase_done("surface", len(all_findings))
         return all_findings
+
+    # ── Graph Enrichment: Maltego-style entity discovery ──────────
+
+    async def _run_graph_enrichment(
+        self,
+        surface_findings: list[Finding],
+        query: str,
+        profile,
+        sse: SSEEmitter,
+        target_types: list[str] | None = None,  # None = use default (domain/org only)
+    ) -> list[Finding]:
+        """Run entity graph + transform engine on findings.
+
+        For domain/organization targets, this discovers infrastructure
+        (subdomains, IPs, geolocation, emails) through recursive transforms
+        and enriches findings with OSINT Framework tool links.
+
+        When called post-deep (target_types=None), runs for ALL target types
+        to extract any domains/orgs/emails discovered in earlier phases.
+
+        Returns new Finding objects to add to the investigation.
+        """
+        # Determine eligible target types
+        if target_types is None:
+            # Post-deep mode: run for all target types
+            eligible = True
+        else:
+            eligible = profile.target_type in target_types
+
+        if not eligible:
+            return []
+
+        try:
+            from ..graph import EntityGraph, TransformEngine
+            from ..graph.osint_framework import get_framework
+        except ImportError as e:
+            logger.warning("graph_enrichment_import_failed: %s", e)
+            return []
+
+        sse.progress("surface", "→ Building entity graph from surface findings…")
+
+        # 1. Create graph and ingest surface findings
+        graph = EntityGraph()
+        ingested = graph.ingest_findings(surface_findings, source_transform="surface_ingest")
+
+        if ingested == 0:
+            sse.progress("surface", "→ No entities extracted from surface findings — skipping graph enrichment")
+            return []
+
+        sse.progress(
+            "surface",
+            f"→ Extracted {ingested} entities from {len(surface_findings)} findings",
+        )
+
+        # 2. Add the primary target as a seed entity
+        from ..graph.entities import EntityType
+        if profile.target_type in ("domain", "company", "organization"):
+            target_domain = query
+            if profile.associated_domains:
+                target_domain = profile.associated_domains[0]
+            graph.add_or_get(
+                EntityType.DOMAIN,
+                target_domain,
+                source="primary_target",
+                confidence=1.0,
+            )
+        elif profile.target_type == "person":
+            # For person targets, add the person as the central seed node.
+            # The transforms will chain from any domains/emails discovered
+            # in surface findings, and the person seed anchors the graph.
+            graph.add_or_get(
+                EntityType.PERSON,
+                query,
+                source="primary_target",
+                confidence=1.0,
+            )
+        elif profile.target_type == "email":
+            # For email targets, add the email as the central seed node.
+            # Transforms will chain email→person→org from surface findings,
+            # building a personal identity graph around the email address.
+            graph.add_or_get(
+                EntityType.EMAIL,
+                query,
+                source="primary_target",
+                confidence=1.0,
+            )
+
+        # 3. Run transforms — depth varies by target type.
+        # Domain/company targets benefit from full chain (domain→IP→geo).
+        # Email/person targets should stop at identity level to avoid
+        # chasing DNS/IP of unrelated domains from search snippets.
+        # EXCEPTION: if criminal indicators triggered person escalation,
+        # allow full transforms — cybercriminals own infrastructure.
+        if profile.target_type in ("email", "person") and not getattr(self, "_person_escalated", False):
+            max_depth = 1  # email→person or person→org only — no infrastructure drill-down
+            # Skip domain→IP transforms. A Twitter bio mentioning a domain
+            # should not trigger DNS resolution for ordinary people.
+            from ..graph.entities import EntityType
+            entity_types = [EntityType.PERSON, EntityType.EMAIL, EntityType.ORGANIZATION]
+        else:
+            max_depth = 3  # domain→email→person→org = 3 hops
+            entity_types = None  # Run ALL transforms for full pivot chain
+        sse.progress("surface", f"→ Running transforms (depth={max_depth})…")
+        engine = TransformEngine(graph)
+
+        try:
+            new_count = await engine.run(
+                max_depth=max_depth,
+                entity_types=entity_types,
+            )
+        except Exception as e:
+            logger.warning("graph_transform_failed: %s", e)
+            new_count = 0
+
+        sse.progress(
+            "surface",
+            f"→ Transforms discovered {new_count} new entities "
+            f"(graph: {graph.entity_count} entities, {graph.relationship_count} relationships)",
+        )
+
+        # ── Stream graph to frontend for Maltego-style visualization ──
+        try:
+            # Send entities
+            entity_data = []
+            for e in graph.iter_entities():
+                entity_data.append({
+                    "id": e.id,
+                    "type": e.entity_type.value if hasattr(e.entity_type, 'value') else str(e.entity_type),
+                    "value": e.value,
+                    "label": getattr(e, "display_name", e.value),
+                    "source": e.source,
+                    "confidence": getattr(e, "confidence", 1.0),
+                })
+            sse.emit("graph_entities", {
+                "entities": entity_data,
+                "total": len(entity_data),
+            })
+
+            # Send relationships
+            rel_data = []
+            for r in graph.iter_relationships():
+                rel_data.append({
+                    "source_id": r.source_id,
+                    "target_id": r.target_id,
+                    "type": r.rel_type,
+                    "confidence": r.confidence,
+                })
+            sse.emit("graph_relations", {
+                "relations": rel_data,
+                "total": len(rel_data),
+            })
+        except Exception as e:
+            logger.warning("graph_sse_stream_failed: %s", e)
+
+        # 4. Reverse-pivot: feed discovered people into Watson's existing tools
+        extra_findings: list[Finding] = []
+        discovered_people = graph.entities_of_type(EntityType.PERSON)
+        discovered_orgs = graph.entities_of_type(EntityType.ORGANIZATION)
+        discovered_emails = graph.entities_of_type(EntityType.EMAIL)
+
+        if discovered_people or discovered_orgs:
+            sse.progress(
+                "surface",
+                f"→ Reverse pivot: investigating {len(discovered_people)} people, "
+                f"{len(discovered_orgs)} organizations…",
+            )
+
+        # Feed each discovered PERSON into the existing people investigation pipeline
+        for person in discovered_people[:5]:  # Limit to 5 to avoid explosion
+            try:
+                from ..tools.people import PeopleTool
+                people_tool = PeopleTool()
+                # Run HIBP + social + breach check on the person's name
+                raw = await people_tool.investigate(person.display_name)
+                for rf in raw:
+                    f = self._tool_finding_to_engine(rf, phase="graph_enrich")
+                    if f:
+                        extra_findings.append(f)
+                sse.progress(
+                    "surface",
+                    f"  → Investigated {person.display_name}: {len(raw)} findings",
+                )
+            except Exception as e:
+                logger.warning("graph_person_investigate_failed: %s → %s", person.value, e)
+
+        # Feed each discovered ORG into the existing corporate investigation pipeline
+        for org in discovered_orgs[:3]:
+            try:
+                from ..tools.corporate import CorporateTool
+                corp_tool = CorporateTool()
+                raw = await corp_tool.investigate(org.display_name)
+                for rf in raw:
+                    f = self._tool_finding_to_engine(rf, phase="graph_enrich")
+                    if f:
+                        extra_findings.append(f)
+                sse.progress(
+                    "surface",
+                    f"  → Investigated {org.display_name}: {len(raw)} findings",
+                )
+            except Exception as e:
+                logger.warning("graph_org_investigate_failed: %s → %s", org.value, e)
+
+        # Feed discovered EMAILs into HIBP/breach check
+        for email_entity in discovered_emails[:5]:
+            # Skip role-based emails that we already have
+            if any(
+                email_entity.value.lower().startswith(r)
+                for r in ("admin@", "support@", "info@", "contact@", "hello@",
+                          "noreply@", "no-reply@", "postmaster@", "abuse@",
+                          "security@", "webmaster@", "hostmaster@", "billing@",
+                          "jobs@", "sales@")
+            ):
+                continue
+            try:
+                from ..tools.people import PeopleTool
+                people_tool = PeopleTool()
+                raw = await people_tool.investigate(email_entity.value)
+                for rf in raw:
+                    f = self._tool_finding_to_engine(rf, phase="graph_enrich")
+                    if f:
+                        extra_findings.append(f)
+                if raw:
+                    sse.progress(
+                        "surface",
+                        f"  → Investigated {email_entity.value}: {len(raw)} findings",
+                    )
+            except Exception as e:
+                logger.warning("graph_email_investigate_failed: %s → %s", email_entity.value, e)
+
+        # 5. Convert graph discoveries to findings
+        graph_findings = graph.to_findings(source_transform="graph_enrichment")
+
+        # Convert dict findings to objects compatible with the engine pipeline
+        # (the rest of the pipeline expects .title, .description attributes)
+        converted_findings: list[Finding] = []
+        for gf in graph_findings:
+            try:
+                from dataclasses import dataclass as _dc
+                converted_findings.append(Finding(
+                    title=gf.get("title", ""),
+                    description=gf.get("description", ""),
+                    source_type=gf.get("source", "graph_enrichment"),
+                    source_url=gf.get("evidence", [None])[0] if gf.get("evidence") else "",
+                    confidence=gf.get("confidence", 0.5),
+                    phase="graph_enrich",
+                ))
+            except Exception:
+                # Fallback: create a minimal finding
+                converted_findings.append(Finding(
+                    title=str(gf.get("title", "Graph discovery")),
+                    description=str(gf.get("description", "")),
+                    phase="graph_enrich",
+                ))
+
+        # 5. Enrich with OSINT Framework links
+        framework = get_framework()
+        for entity in graph.iter_entities():
+            if entity.source in (
+                "dns_resolution", "subdomain_enum", "ip_geolocation",
+                "email_discovery", "graph_enrichment",
+            ):
+                # Add OSINT Framework tool links as evidence
+                tools = framework.get_search_urls(
+                    entity.entity_type,
+                    entity.value,
+                    max_results=5,
+                )
+                if tools:
+                    # Attach to the entity's properties for the finding
+                    entity.properties["osint_framework_tools"] = [
+                        {"name": t["tool"], "url": t["url"]}
+                        for t in tools
+                    ]
+
+        # Re-generate findings with enriched properties
+        graph_findings = graph.to_findings(source_transform="graph_enrichment")
+
+        # Merge graph findings with reverse-pivot extra findings
+        all_graph_findings = converted_findings + extra_findings
+
+        logger.info(
+            "graph_enrichment_complete: ingested=%d graph_new=%d extra=%d total=%d findings=%d",
+            ingested, new_count, len(extra_findings),
+            graph.entity_count, len(all_graph_findings),
+        )
+
+        return all_graph_findings
 
     # ── Phase 3: Identifier Pivoting ──────────────────────────
 
@@ -2151,7 +2707,7 @@ class OrchestrationEngine:
                 sse.phase_done("deep", len(tool_findings))
                 return tool_findings
             sse.progress("deep", "→ Continuing to Wikidata, infrastructure, and LLM synthesis…")
-        if profile.target_type in ("company", "organization"):
+        if profile.target_type in ("company", "organization", "domain"):
             sse.progress("deep", "→ OpenCorporates registry search…")
             try:
                 from ..tools.corporate import CorporateTool
@@ -2174,7 +2730,9 @@ class OrchestrationEngine:
                 search_queries = [
                     f'{org_query} CEO founder',
                     f'{org_query} lawsuit controversy investigation',
-                    f'{org_query} Epstein OR sanctions OR fraud',
+                    f'{org_query} sanctions OR fraud OR SEC fine',
+                    f'{org_query} government contract military surveillance',
+                    f'{org_query} data privacy FTC GDPR regulation',
                 ]
                 def _ddg_search(q):
                     try:
@@ -2216,9 +2774,12 @@ class OrchestrationEngine:
                         if name.lower() not in ('the', 'and', 'for', 'Inc', 'Llc'):
                             people_found.add(name)
                 if people_found:
-                    sse.progress("deep",
-                        f"→ Detected key people: {', '.join(list(people_found)[:5])} "
-                        f"(re-run with person target for deep investigation)")
+                    # Auto-pivot: run lightweight background checks on key employees
+                    employee_findings = await self._auto_pivot_employees(
+                        people_found, org_query, sse
+                    )
+                    if employee_findings:
+                        tool_findings.extend(employee_findings)
             except Exception as e:
                 logger.warning("org_ddg_search_failed: %s", e)
 
@@ -2242,9 +2803,15 @@ class OrchestrationEngine:
             investig_mode = getattr(self, '_investigation_mode', '')
             
             if investig_mode == "deep_investigation" or self._person_escalated:
-                # CRIMINAL/LEGAL: full court records, sanctions, Interpol, prison
-                search_label = "searching court records, news, legal databases"
-                search_mode = "criminal"
+                # Run BOTH professional identity queries AND criminal/legal queries.
+                # Professional queries establish the person's background (LinkedIn,
+                # employment, board positions) — essential context even for criminal
+                # investigations. Criminal queries add sanctions, court records, and
+                # wanted notices. Without professional queries, deep investigations
+                # miss entire professional profiles (e.g. "Paolo Trecate" → only found
+                # jail lookup sites, never discovered eurodefense.tech).
+                search_label = "searching professional history + court records, legal databases"
+                search_mode = "both"
             elif investig_mode == "due_diligence":
                 # PROFESSIONAL/BUSINESS: employment, adverse media, regulatory
                 search_label = "searching professional history, adverse media, regulatory"
@@ -2261,19 +2828,37 @@ class OrchestrationEngine:
                     
                     if search_mode == "criminal":
                         search_queries = [
+                            f'"{person_name}" site:wikipedia.org',
                             f'"{person_name}" convicted OR sentenced OR prison',
                             f'"{person_name}" court OR trial OR guilty',
                             f'"{person_name}" arrested OR charged OR indictment',
                             f'"{person_name}" crime OR murder OR homicide',
                             f'"{person_name}" interpol OR wanted OR fugitive',
                         ]
-                    else:  # professional / due diligence
+                    elif search_mode == "professional":
                         search_queries = [
                             f'"{person_name}" linkedin professional',
                             f'"{person_name}" lawsuit OR controversy OR fraud',
                             f'"{person_name}" regulatory action OR fine OR penalty',
                             f'"{person_name}" board member OR executive OR director',
                             f'"{person_name}" adverse media OR negative news',
+                        ]
+                    elif search_mode == "both":
+                        # Combine professional identity + criminal/legal queries.
+                        # Professional queries map the person's employment, network,
+                        # and affiliations (critical for any investigation). Criminal
+                        # queries surface sanctions, court records, and wanted notices.
+                        search_queries = [
+                            # ── Professional identity ──
+                            f'"{person_name}" linkedin professional',
+                            f'"{person_name}" board member OR executive OR director',
+                            f'"{person_name}" adverse media OR negative news',
+                            # ── Criminal/legal ──
+                            f'"{person_name}" site:wikipedia.org',
+                            f'"{person_name}" convicted OR sentenced OR prison',
+                            f'"{person_name}" arrested OR charged OR indictment',
+                            f'"{person_name}" interpol OR wanted OR fugitive',
+                            f'"{person_name}" lawsuit OR controversy OR fraud',
                         ]
                     # Add locale-specific queries if profile has location data
                     locale = _get_locale(profile, query)
@@ -2286,9 +2871,22 @@ class OrchestrationEngine:
                                 search_queries.append(f'"{person_name}" {kw_query}')
                             if nd:
                                 search_queries.append(f'"{person_name}" {nd}')
-                        else:  # professional mode
+                        elif search_mode == "professional":
                             pk = locale.get("person_keywords", [])
                             nd = locale.get("news_domains", "")
+                            if pk:
+                                kw_query = " OR ".join(pk[:6])
+                                search_queries.append(f'"{person_name}" {kw_query}')
+                            if nd:
+                                search_queries.append(f'"{person_name}" {nd}')
+                        elif search_mode == "both":
+                            # Add both criminal and professional locale queries
+                            lk = locale.get("criminal_keywords", [])
+                            pk = locale.get("person_keywords", [])
+                            nd = locale.get("news_domains", "")
+                            if lk:
+                                kw_query = " OR ".join(lk[:6])
+                                search_queries.append(f'"{person_name}" {kw_query}')
                             if pk:
                                 kw_query = " OR ".join(pk[:6])
                                 search_queries.append(f'"{person_name}" {kw_query}')
@@ -2314,26 +2912,58 @@ class OrchestrationEngine:
                                 search_results.append(r)
                     
                     if search_results:
-                        # Read top 2 articles for deep analysis — DeepSeek V4 is slow with large context
-                        sse.progress("deep", f"→ Reading {min(2, len(search_results))} articles for deep analysis…")
-                        article_text = await self._read_top_articles(search_results, max_articles=2)
+                        # Sort: Wikipedia first (richest source), then by relevance
+                        search_results.sort(key=lambda r: 0 if "wikipedia.org" in r.get("href","") else 1)
                         
-                        # LLM-powered extraction with full article text
+                        # ── Fetch full Wikipedia article in one pass (50k chars) ──
+                        # This is THE single biggest improvement: instead of truncated snippets,
+                        # the LLM gets the complete article and extracts every fact.
+                        wiki_full_text = ""
+                        try:
+                            wiki_full_text = await self._fetch_wikipedia_full_text(person_name)
+                            if wiki_full_text:
+                                sse.progress("deep", 
+                                    f"→ Wikipedia full text: {len(wiki_full_text)} chars — complete article")
+                        except Exception as e:
+                            logger.debug("wiki_full_fetch_failed: %s", e)
+                        
+                        # Read top 5 articles for deep analysis — need depth for criminal targets
+                        sse.progress("deep", f"→ Reading {min(5, len(search_results))} articles for deep analysis…")
+                        article_text = await self._read_top_articles(search_results, max_articles=5)
+                        
+                        # Prepend Wikipedia full text for complete extraction
+                        if wiki_full_text:
+                            article_text = wiki_full_text + "\n\n===SUPPLEMENTARY ARTICLES===\n" + (article_text or "")
+                        
+                        # LLM-powered extraction with full article text — 50k chars for depth
                         if article_text:
-                            if search_mode == "criminal":
+                            if search_mode in ("criminal", "both"):
                                 prompt = (
                                     f"CRIMINAL/LEGAL DEEP DIVE: {person_name}\n\n"
-                                    f"FULL ARTICLE TEXT:\n{article_text[:5000]}\n\n"
-                                    f"Extract all criminal, legal, and investigative findings:\n"
-                                    f"- Criminal charges, convictions, sentences\n"
-                                    f"- Court cases, trials, appeals\n"
-                                    f"- Law enforcement actions (arrests, warrants, Interpol notices)\n"
-                                    f"- Sanctions, asset freezes, travel bans\n"
-                                    f"- Organized crime connections, cartel affiliations\n"
-                                    f"- Prison sentences, release dates, parole status\n"
-                                    f"- Victim impact, case details\n\n"
-                                    f"For each finding, provide: FINDING: title | SOURCE: url | DATA: description | TIER: PRIMARY/SECONDARY\n"
-                                    f"Only report verified facts from the articles. Skip speculation."
+                                    f"FULL ARTICLE TEXT:\n{article_text[:50000]}\n\n"
+                                    f"Extract EVERY specific fact — names, dates, dollar amounts, locations:\n"
+                                    f"1. CHARGES: Every specific charge (by statute name/number), indictment date, jurisdiction\n"
+                                    f"2. TRIALS: Court name, judge name, trial dates, verdict date, every count\n"
+                                    f"3. SENTENCING: Exact date, prison term length, prison name/location, inmate number\n"
+                                    f"4. FINES/FORFEITURE: Exact dollar amounts, assets named\n"
+                                    f"5. ESCAPES: Date, prison name, method, accomplices named, bribes paid\n"
+                                    f"6. SANCTIONS: OFAC/UN/EU/Kingpin Act — exact designation date, program name\n"
+                                    f"7. ASSOCIATES: Every named co-conspirator, cartel member, family member\n"
+                                    f"8. FAMILY: Spouses by name, children by name, their legal status\n"
+                                    f"9. ASSETS: Properties, companies, bank accounts, shell companies by name\n"
+                                    f"10. NOVEL ANGLES: 3 investigation questions not answered in the text\n\n"
+                                    f"For each: FINDING: fact | SOURCE: url | DATA: verbatim quote | TIER: PRIMARY/SECONDARY\n"
+                                    f"Include dollar signs, dates in YYYY-MM-DD format, full names.\n\n"
+                                    f"─── STAGE 2: CROSS-SOURCE SYNTHESIS ───\n"
+                                    f"After extracting facts, identify the 5 most important connected entities\n"
+                                    f"(people, companies, organizations, events) mentioned in the article.\n"
+                                    f"For EACH connected entity, search the web and find:\n"
+                                    f"- How they connect to {person_name}\n"
+                                    f"- Their own criminal/legal status (sanctions, convictions, investigations)\n"
+                                    f"- Any financial or operational links\n"
+                                    f"Then report CROSS-CONNECTIONS: 'X was {person_name}'s front company →\n"
+                                    f"X was also used by Y for Z → this means the network spans...'\n"
+                                    f"Report as: CONNECTION: description | ENTITIES: A, B, C | SOURCES: url1, url2"
                                 )
                             else:  # professional / due diligence
                                 prompt = (
@@ -2498,6 +3128,280 @@ class OrchestrationEngine:
         sse.phase_done("deep", len(all_findings))
         return all_findings
 
+    # ── Auto-pivot: Company → Key Employees ──────────────────
+
+    async def _auto_pivot_employees(
+        self, people: set[str], org_query: str, sse: SSEEmitter
+    ) -> list[Finding]:
+        """Run lightweight person background checks on key employees detected
+        during a company investigation. Uses passive DDG search only — no
+        LinkedIn credentials, no scraping, fully enterprise-legal.
+
+        Each person gets 2-3 targeted DDG queries (sanctions/controversy,
+        professional profile, adverse media). Results are injected into the
+        company investigation as phase='employee_pivot' findings.
+        """
+        if not people:
+            return []
+
+        # Filter noise — skip single-word names, common false positives
+        _SKIP_WORDS = {
+            "the", "and", "for", "inc", "llc", "ltd", "corp", "group",
+            "holdings", "company", "limited", "plc", "gmbh", "sa", "ag",
+            "technologies", "solutions", "systems", "services", "global",
+            "international", "capital", "partners", "management", "security",
+            "national", "united", "states", "america", "europe", "china",
+        }
+        names = sorted([
+            n for n in people
+            if " " in n  # must be multi-word
+            and n.lower() not in _SKIP_WORDS
+            and len(n.split()) >= 2
+            and all(len(w) > 1 for w in n.split())
+        ])
+        if not names:
+            return []
+
+        top_names = names[:5]  # Cap at 5 to keep it fast
+        sse.progress(
+            "deep",
+            f"→ Auto-pivoting to {len(top_names)} key people: "
+            f"{', '.join(top_names[:3])}{'...' if len(top_names) > 3 else ''}",
+        )
+
+        findings: list[Finding] = []
+        try:
+            from ddgs import DDGS
+
+            async def _check_person(name: str) -> list[Finding]:
+                """Run 2-3 targeted DDG searches on a single person."""
+                person_findings: list[Finding] = []
+
+                queries = [
+                    f'"{name}" sanctions OR controversy OR fraud OR investigation',
+                    f'"{name}" linkedin OR github OR professional',
+                    f'"{name}" wikipedia OR news',
+                ]
+
+                def _ddg_search(q: str) -> list:
+                    try:
+                        with DDGS() as ddgs:
+                            return list(ddgs.text(q, max_results=3))
+                    except Exception:
+                        return []
+
+                all_raw = await asyncio.gather(*[
+                    asyncio.to_thread(_ddg_search, q) for q in queries
+                ])
+
+                seen: set[str] = set()
+                for raw_list in all_raw:
+                    for r in raw_list:
+                        href = r.get("href", "")
+                        if not href or href in seen:
+                            continue
+                        # Skip noise domains — business directories, aggregators
+                        _NOISE = {
+                            "yelp.", "tripadvisor.", "maps.google.", "facebook.com",
+                            "instagram.com", "pinterest.", "yellowpages.", "manta.com",
+                            "zoominfo.com", "rocketreach.", "signalhire.",
+                        }
+                        if any(d in href for d in _NOISE):
+                            continue
+                        seen.add(href)
+                        title = r.get("title", "")[:150]
+                        body = r.get("body", "")[:300]
+                        person_findings.append(Finding(
+                            id=f"emp-{uuid.uuid4().hex[:10]}",
+                            title=f"👤 [{name}] {title}",
+                            description=body,
+                            source_type="employee_pivot",
+                            source_url=href,
+                            source_tier="SECONDARY",
+                            confidence=0.55,
+                            phase="employee_pivot",
+                            entities=[{"name": name, "type": "person", "role": "key_employee"}],
+                        ))
+
+                return person_findings
+
+            # Run all person checks in parallel
+            all_person_findings = await asyncio.gather(*[
+                _check_person(name) for name in top_names
+            ])
+
+            for pf_list in all_person_findings:
+                for f in pf_list:
+                    findings.append(f)
+                    sse.finding(f)
+
+            total = sum(len(pf) for pf in all_person_findings)
+            if total:
+                sse.progress(
+                    "deep",
+                    f"→ Employee pivot: {total} findings across {len(top_names)} key people",
+                )
+            else:
+                sse.progress("deep", "→ Employee pivot: no public intel found on key people")
+
+        except Exception as e:
+            logger.warning("auto_pivot_employees_failed: %s", e)
+
+        return findings
+
+    # ── Auto-pivot: Person → OpenSanctions Re-query ───────────
+
+    async def _auto_pivot_opensanctions(
+        self, findings: list[Finding], query: str,
+        primary_name: str, sse: SSEEmitter
+    ) -> list[Finding]:
+        """Scan findings for discovered full names and re-query OpenSanctions.
+
+        When a person investigation starts with a partial name (e.g. first name +
+        patronymic "Volodymyr Viktorovych" with no surname), the initial OpenSanctions
+        API call returns noisy/generic results. The DDG deep search later discovers
+        the full name ("Volodymyr Viktorovych Tymoshchuk"), but OpenSanctions is
+        never re-queried with it.
+
+        This method extracts all discovered person names from accumulated findings,
+        compares them against the original query, and runs the OpenSanctions API for
+        any NEW full names that contain criminal/sanctions signals. This ensures
+        structured sanctions data (schema, datasets, topics, related entities) is
+        surfaced for the actual target, not just raw web search results.
+        """
+        import re as _re
+
+        # ── Step 1: Extract all person names from findings ──
+        # Look for full names in finding titles, descriptions, and entity lists.
+        # Ukrainian/Russian names use patronymics (Viktorovych, Ivanovich, etc.)
+        # so we match 3-part names and 2-part names with criminal indicators.
+        discovered_names: set[str] = set()
+
+        for f in findings:
+            # Collect text from title, description, and entities
+            texts = [f.title or "", f.description or ""]
+            for ent in (f.entities or []):
+                if isinstance(ent, dict):
+                    texts.append(ent.get("name", ""))
+                elif isinstance(ent, str):
+                    texts.append(ent)
+            
+            combined = " ".join(texts)
+            
+            # Extract name-like patterns from criminal/sanctions context
+            # Match: "Volodymyr Viktorovych Tymoshchuk" (3-part naming)
+            # Match: "Tymoshchuk, Volodymyr" (reverse)
+            # Match: "Volodymyr Tymoshchuk" (2-part)
+            for match in _re.finditer(
+                r'\b([A-Z][a-zà-ü]+(?:\s+[A-Z][a-zà-ü]+){1,3})\b',
+                combined
+            ):
+                name = match.group(1).strip()
+                # Skip names that look like titles/orgs
+                if len(name.split()) >= 2 and len(name) >= 8:
+                    discovered_names.add(name)
+
+        if not discovered_names:
+            return []
+
+        # ── Step 2: Filter to NEW names different from the original query ──
+        query_lower = query.lower().strip()
+        primary_lower = primary_name.lower().strip()
+
+        new_names: list[str] = []
+        for name in discovered_names:
+            nl = name.lower()
+            # Skip if it's just the original query with extra junk
+            if nl == query_lower or nl == primary_lower:
+                continue
+            # Skip if the name IS the original query (original query is substring)
+            # but only if the query is substantial (3+ words). A 2-word query like
+            # "Volodymyr Viktorovych" shouldn't block "Volodymyr Viktorovych Tymoshchuk"
+            query_words = query_lower.split()
+            primary_words = primary_lower.split()
+            if len(query_words) >= 3 and query_lower in nl:
+                continue
+            if len(primary_words) >= 3 and primary_lower in nl:
+                continue
+            # Include the name regardless — even if original query is a prefix
+            new_names.append(name)
+
+        if not new_names:
+            return []
+
+        # Deduplicate and keep unique names
+        new_names = list(dict.fromkeys(new_names))  # preserve order, deduplicate
+
+        # ── Step 3: Prioritize names with criminal/sanctions signals ──
+        CRIMINAL_SIGNALS = [
+            "sanction", "wanted", "fbi", "interpol", "indictment", "convicted",
+            "sentenced", "arrested", "fugitive", "ransomware", "cybercriminal",
+            "ofac", "red notice", "extradition", "fraud", "money laundering",
+            "conspiracy", "prison", "charged", "guilty",
+        ]
+        
+        priority_names: list[str] = []
+        other_names: list[str] = []
+        for name in new_names:
+            nl = name.lower()
+            # Check if any finding mentioning this name has criminal signals
+            has_signal = False
+            for f in findings:
+                combined = (f.title or "") + " " + (f.description or "")
+                if name.lower() in combined.lower():
+                    if any(sig in combined.lower() for sig in CRIMINAL_SIGNALS):
+                        has_signal = True
+                        break
+            if has_signal:
+                priority_names.append(name)
+            else:
+                other_names.append(name)
+
+        # Re-query OpenSanctions: priority names first, capped at 4 total
+        names_to_query = priority_names[:3] + other_names[:1]
+        names_to_query = names_to_query[:4]
+
+        if not names_to_query:
+            return []
+
+        sse.progress(
+            "deep",
+            f"→ OpenSanctions auto-pivot: re-querying {len(names_to_query)} discovered names: "
+            f"{', '.join(names_to_query[:2])}{'...' if len(names_to_query) > 2 else ''}",
+        )
+
+        # ── Step 4: Run OpenSanctions API for each discovered name ──
+        pivot_findings: list[Finding] = []
+        try:
+            from ..tools.scraper import ScraperTool
+
+            async def _os_query(name: str) -> list[Finding]:
+                scraper = ScraperTool()
+                return await scraper._scrape_opensanctions(name)
+
+            all_results = await asyncio.gather(*[_os_query(n) for n in names_to_query])
+
+            for name, result_list in zip(names_to_query, all_results):
+                for rf in result_list:
+                    f = self._tool_finding_to_engine(rf, phase="os_pivot")
+                    if f:
+                        # Tag as auto-pivot finding so synthesis knows this is structured data
+                        f.title = f"🔄 [auto-pivot] {f.title}"
+                        pivot_findings.append(f)
+                        sse.finding(f)
+
+            if pivot_findings:
+                sse.progress(
+                    "deep",
+                    f"→ OpenSanctions auto-pivot: {len(pivot_findings)} structured findings "
+                    f"from discovered names",
+                )
+
+        except Exception as e:
+            logger.warning("auto_pivot_opensanctions_failed: %s", e)
+
+        return pivot_findings
+
     # ── Phase 5: Dark Web ─────────────────────────────────────
 
     async def _phase_dark(self, query: str, profile, context: str, sse: SSEEmitter) -> list[Finding]:
@@ -2548,12 +3452,136 @@ class OrchestrationEngine:
         sse.phase_done("dark", len(all_findings))
         return all_findings
 
+    # ── Phase 5.5: Cross-platform identity correlation ──────────
+
+    @staticmethod
+    def _correlate_identity(findings: list, query: str, sse) -> dict | None:
+        """Cross-platform identity correlation for person/email targets.
+
+        Extracts identity signals (names, usernames, emails, platforms,
+        employers, locations) from findings and clusters them into
+        confidence-scored identity groups.
+
+        This answers: "Do all these profiles belong to the same person?"
+        """
+        import re as _re
+
+        if not findings:
+            return None
+
+        # ── Extract signals from each finding ──
+        signals: list[dict] = []
+        for f in findings:
+            title = getattr(f, "title", "") or ""
+            desc = getattr(f, "description", "") or ""
+            url = getattr(f, "source_url", "") or ""
+            combined = f"{title} {desc}"
+
+            sig: dict = {
+                "finding_title": title[:100],
+                "names": set(),
+                "usernames": set(),
+                "emails": set(),
+                "platforms": set(),
+                "locations": set(),
+                "employers": set(),
+            }
+
+            # Extract emails
+            for m in _re.finditer(r'[\w.+-]+@[\w-]+\.[a-zA-Z]{2,}', combined):
+                sig["emails"].add(m.group(0).lower())
+
+            # Extract names (2-3 capitalized words)
+            for m in _re.finditer(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\b', combined):
+                name = m.group(1)
+                if name.lower() not in ("the", "and", "for", "inc", "llc", "ltd", "corp", "gmbh"):
+                    sig["names"].add(name)
+
+            # Extract platforms from URLs
+            for platform_domain in ["linkedin.com", "twitter.com", "x.com", "instagram.com",
+                                      "github.com", "researchgate.net", "facebook.com",
+                                      "tiktok.com", "youtube.com", "behance.net"]:
+                if platform_domain in url.lower():
+                    sig["platforms"].add(platform_domain)
+
+            # Extract usernames (@handles)
+            for m in _re.finditer(r'@(\w{3,30})', combined):
+                sig["usernames"].add(m.group(1).lower())
+
+            # Simple employer detection
+            for kw in [" at ", " works at ", " google", " microsoft", " amazon", " apple",
+                        " meta", " tesla", " openai", " linkedin"]:
+                if kw in combined.lower():
+                    # Crude but effective for now
+                    pass
+
+            signals.append(sig)
+
+        # ── Score identity match between each pair ──
+        matches: list[dict] = []
+        for i in range(len(signals)):
+            for j in range(i + 1, len(signals)):
+                a, b = signals[i], signals[j]
+                score = 0.0
+                reasons: list[str] = []
+
+                # Same email = near-certain match
+                if a["emails"] & b["emails"]:
+                    score = 1.0
+                    reasons.append("shared email")
+                # Same name
+                elif a["names"] & b["names"]:
+                    score += 0.6
+                    reasons.append("shared name")
+                    # Same name + same platform domain = higher confidence
+                    if a["platforms"] & b["platforms"]:
+                        score += 0.2
+                        reasons.append("shared platform")
+                # Same username across platforms
+                elif a["usernames"] & b["usernames"]:
+                    score += 0.8
+                    reasons.append("shared username")
+
+                if score >= 0.5:
+                    matches.append({
+                        "finding_a": a["finding_title"][:80],
+                        "finding_b": b["finding_title"][:80],
+                        "confidence": round(min(score, 1.0), 2),
+                        "signals": reasons,
+                    })
+
+        if not matches:
+            sse.progress("correlate", "→ No cross-platform identity matches found")
+            return None
+
+        # ── Report ──
+        confirmed = [m for m in matches if m["confidence"] >= 0.9]
+        probable = [m for m in matches if 0.7 <= m["confidence"] < 0.9]
+        possible = [m for m in matches if 0.5 <= m["confidence"] < 0.7]
+
+        sse.progress("correlate",
+            f"→ Identity correlation: {len(confirmed)} confirmed, "
+            f"{len(probable)} probable, {len(possible)} possible matches")
+
+        return {
+            "total_matches": len(matches),
+            "confirmed": confirmed[:5],
+            "probable": probable[:5],
+            "possible": possible[:5],
+            "summary": (
+                f"Cross-platform identity correlation found {len(confirmed)} confirmed, "
+                f"{len(probable)} probable, and {len(possible)} possible identity matches "
+                f"across {len(signals)} signals."
+            ) if matches else None,
+        }
+
     # ── Phase 6: Analyze ──────────────────────────────────────
 
     async def _phase_analyze(self, query: str, focus: str,
                               findings: list[Finding], sse: SSEEmitter,
                               target_type: str = "",
-                              graph_context: dict | None = None) -> dict | None:
+                              graph_context: dict | None = None,
+                              correlation: dict | None = None) -> dict | None:
         """Cross-reference, entity resolution, LLM synthesis."""
         if not findings:
             return None
@@ -2563,12 +3591,28 @@ class OrchestrationEngine:
             from .resolution import build_intelligence_picture
             resolved, cross_refs = build_intelligence_picture(findings)
             if resolved and sse._on_event:
+                # ── Cap entities to avoid JSON serialization blowout ──
+                # Entity resolution can produce 100s of entities when PeopleTool
+                # adds identity findings — json.dumps on 500+ nested entity dicts
+                # chokes the SSE stream. Send top 100 by confidence, enough for
+                # the frontend graph.
+                sorted_entities = sorted(resolved, key=lambda e: e.confidence, reverse=True)
+                capped = sorted_entities[:100]
+                if len(resolved) > 100:
+                    logger.info("entity_resolution_capped: %d → %d", len(resolved), len(capped))
                 sse.emit("entity_resolution", {
-                    "entities": [e.to_dict() for e in resolved],
+                    "entities": [e.to_dict() for e in capped],
                     "total": len(resolved),
+                    "capped": len(resolved) > 100,
                 })
             if cross_refs and sse._on_event:
-                sse.emit("cross_reference", {"patterns": cross_refs, "total": len(cross_refs)})
+                # Cap cross-reference patterns too — rarely huge but be safe
+                capped_refs = cross_refs[:200] if len(cross_refs) > 200 else cross_refs
+                sse.emit("cross_reference", {
+                    "patterns": capped_refs,
+                    "total": len(cross_refs),
+                    "capped": len(cross_refs) > 200,
+                })
         except Exception as e:
             logger.warning("resolution_failed: %s", e)
 
@@ -2585,6 +3629,7 @@ class OrchestrationEngine:
                 executed_tools=sse.executed_tools,
                 investigation_mode=getattr(self, '_investigation_mode', ''),
                 graph_context=graph_context or {},
+                correlation=correlation,
             )
             if brief and sse._on_event:
                 sse.emit("brief", brief)
@@ -2614,12 +3659,27 @@ class OrchestrationEngine:
         gap_findings: list[Finding] = []
         focus_name = focus or query
 
-        for gap in gaps[:3]:
+        # Filter out synthetic/fallback gap messages that are NOT real gaps.
+        # These leak from synthesis fallback when LLM call fails.
+        SYNTHETIC_GAP_PATTERNS = [
+            "llm synthesis unavailable",
+            "themes detected from finding titles only",
+            "re-run for full ai analysis",
+        ]
+        real_gaps = [g for g in gaps[:3]
+                     if not any(p in g.lower() for p in SYNTHETIC_GAP_PATTERNS)]
+        if not real_gaps:
+            sse.progress("gaps", "⏭ No actionable gaps (synthetic markers only)")
+            return []
+
+        for gap in real_gaps:
             gap_lower = gap.lower()
 
             # ── Sanctions gap → OpenSanctions + OpenCorporates ──
             if any(kw in gap_lower for kw in ("sanction", "ofac", "eu sanction", "un sanction",
-                                                 "designation", "blacklist", "restricted")):
+                                                 "designation", "blacklist", "restricted",
+                                                 "asset freeze", "travel ban", "interpol",
+                                                 "red notice", "wanted", "extradition")):
                 sse.progress("gaps", f"  → OpenSanctions check for: {gap[:80]}")
                 try:
                     from ..tools.scraper import ScraperTool
@@ -2665,7 +3725,9 @@ class OrchestrationEngine:
 
             # ── Legal/court gap → targeted web search ──
             elif any(kw in gap_lower for kw in ("legal", "court", "lawsuit", "litigation",
-                                                  "ruling", "fine", "penalty", "verdict")):
+                                                  "ruling", "fine", "penalty", "verdict",
+                                                  "conviction", "sentence", "prison", "incarceration",
+                                                  "parole", "appeal", "indictment", "prosecution")):
                 sse.progress("gaps", f"  → Legal research for: {gap[:80]}")
                 try:
                     prompt = (
@@ -2701,12 +3763,23 @@ class OrchestrationEngine:
 
             # ── Generic fallback → targeted web search ──
             else:
-                sse.progress("gaps", f"  → Targeted search for: {gap[:80]}")
+                # Extract keywords from gap — never search for the gap text literally.
+                # "No information on convictions" → search for "focus_name convictions"
+                gap_keywords = gap.lower()\
+                    .replace("no information on ", "")\
+                    .replace("no verified ", "")\
+                    .replace("no ", "")\
+                    .replace("any ", "")\
+                    .replace("the ", "")\
+                    .strip(" .")
+                search_query = f"{focus_name} {gap_keywords}" if gap_keywords else focus_name
+                sse.progress("gaps", f"  → Targeted search for: {search_query[:80]}")
                 try:
                     prompt = (
-                        f"Fill this intelligence gap for {focus_name}: {gap}\n"
+                        f"Search for: {search_query}\n"
+                        f"Intelligence gap to fill: {gap}\n"
                         f"Find specific, verifiable data with source URLs. "
-                        f"If the gap cannot be filled with available sources, say so."
+                        f"If the gap cannot be filled, say so clearly."
                     )
                     raw = await self._investigation_call(prompt, phase="gap_generic", sse=sse)
                     if raw:
@@ -2729,11 +3802,14 @@ class OrchestrationEngine:
         primary = sum(1 for f in findings if f.source_tier == "PRIMARY")
         has_url = sum(1 for f in findings if f.source_url)
 
-        # Verifiability score
+        # Verifiability score — weighted: URL sources + high-confidence tiers
+        # Most OSINT findings are SECONDARY (news, Wikipedia) — PRIMARY tier
+        # (court docs, sanctions lists) is rare. Weight PROBABLE heavily.
         report.verifiability_score = (
-            0.4 * (primary / max(total, 1)) +
-            0.4 * (has_url / max(total, 1)) +
-            0.2 * (confirmed / max(total, 1))
+            0.25 * (primary / max(total, 1)) +
+            0.25 * (has_url / max(total, 1)) +
+            0.15 * (confirmed / max(total, 1)) +
+            0.35 * (probable / max(total, 1))
         )
 
         lines = [
@@ -2856,7 +3932,7 @@ class OrchestrationEngine:
 
     _NEGATIVE_PATTERNS = [
         # Empty/no-result findings — these are API status, not intelligence
-        r"^no\s+(dark-web|ransomware|pastebin|results?)\s",
+        r"^no\s+(dark[\s-]?web|ransomware|pastebin|results?)\s",
         r"^no\s+matches?\s+found",
         r"^no\s+records?\s+found",
         r"^no\s+results?\s+for",
@@ -2866,6 +3942,10 @@ class OrchestrationEngine:
         r"^search\s+returned\s+no\s+results",
         r"^no\s+information\s+available",
         r"^0\s+results?\s",
+        # LLM summary headers that aren't actual findings
+        r"^(summary|overview|conclusion|assessment)\s+of\s",
+        r"^(executive|key)\s+(summary|findings|intelligence)",
+        r"^confidence\s+assessment",
     ]
 
     @staticmethod
@@ -2922,7 +4002,11 @@ class OrchestrationEngine:
                 urls = re.findall(r'https?://[^\s\)\]]+', description)
                 if urls:
                     source_url = urls[0]
-            
+
+            # URL boost: tool findings with verified URLs are more reliable
+            if source_url:
+                confidence = min(0.99, confidence + 0.15)
+
             return Finding(
                 title=f"[{tool_name}] {title}" if tool_name else title,
                 description=description,
@@ -2937,6 +4021,42 @@ class OrchestrationEngine:
             return None
 
     # ── Hermes subprocess call ────────────────────────────────
+
+    async def _fetch_wikipedia_full_text(self, person_name: str) -> str:
+        """Fetch the full Wikipedia article text for a person using the MediaWiki API.
+        
+        Returns the complete plain-text extract (up to 50k chars) — enough for the
+        deep phase LLM to extract every fact instead of relying on truncated snippets.
+        """
+        import urllib.parse
+        import httpx
+        
+        # Use the API to get the full page extract
+        encoded = urllib.parse.quote(person_name)
+        api_url = (
+            f"https://en.wikipedia.org/w/api.php"
+            f"?action=query&format=json&prop=extracts"
+            f"&titles={encoded}&explaintext=1&exintro=0"
+            f"&redirects=1"
+        )
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.get(api_url, headers={
+                    "User-Agent": "WatsonOSINT/0.4 (research; contact@example.com)"
+                })
+                if resp.status_code != 200:
+                    return ""
+                data = resp.json()
+                pages = data.get("query", {}).get("pages", {})
+                for page_id, page in pages.items():
+                    if page_id == "-1":
+                        continue  # Page not found
+                    extract = page.get("extract", "")
+                    if extract:
+                        return extract[:50000]  # Cap at 50k chars
+        except Exception as e:
+            logger.debug("wikipedia_full_text_failed: %s", e)
+        return ""
 
     async def _investigation_call(
         self,
@@ -3099,14 +4219,33 @@ and confidence assessments. Follow the OUTPUT FORMAT specified above."""
                         detected.append(lang_code)
                     break
         
-        # Also detect Cyrillic, CJK, or Arabic characters in aliases
-        for alias in (profile.known_aliases or []):
-            if any('\u0400' <= c <= '\u04ff' for c in alias) and 'ru' not in detected:
+        # Also detect Cyrillic, CJK, or Arabic characters in aliases AND target name
+        all_names = list(profile.known_aliases or []) + [profile.primary_name or ""]
+        for name in all_names:
+            if any('\u0400' <= c <= '\u04ff' for c in name) and 'ru' not in detected:
                 detected.insert(0, 'ru')  # Russian priority
-            if any('\u4e00' <= c <= '\u9fff' for c in alias) and 'zh' not in detected:
+            if any('\u4e00' <= c <= '\u9fff' for c in name) and 'zh' not in detected:
                 detected.insert(0, 'zh')  # Chinese priority
-            if any('\u0600' <= c <= '\u06ff' for c in alias) and 'ar' not in detected:
+            if any('\u0600' <= c <= '\u06ff' for c in name) and 'ar' not in detected:
                 detected.insert(0, 'ar')  # Arabic priority
+            # Hungarian-specific: ő, ű characters
+            if any(c in name for c in 'őŐűŰ') and 'hu' not in detected:
+                detected.insert(0, 'hu')
+            # Czech/Slovak: ě, š, č, ř, ž, ý, á, í, é, ď, ť, ň, ů
+            if any(c in name for c in 'ěščřžýáíéďťňůĚŠČŘŽÝÁÍÉĎŤŇŮ') and 'cs' not in detected:
+                detected.insert(0, 'cs')
+            # Romanian: ă, â, î, ș, ț
+            if any(c in name for c in 'ăâîșțĂÂÎȘȚ') and 'ro' not in detected:
+                detected.insert(0, 'ro')
+            # Turkish: ı, ğ, ş, ç, ö, ü (dotless i)
+            if any(c in name for c in 'ığşçöüİĞŞÇÖÜ') and 'tr' not in detected:
+                detected.insert(0, 'tr')
+            # Polish: ą, ć, ę, ł, ń, ó, ś, ź, ż
+            if any(c in name for c in 'ąćęłńóśźżĄĆĘŁŃÓŚŹŻ') and 'pl' not in detected:
+                detected.insert(0, 'pl')
+            # German: ö, ü, ä, ß
+            if any(c in name for c in 'öüäßÖÜÄẞ') and 'de' not in detected:
+                detected.insert(0, 'de')
         
         logger.info("detected_languages", extra={"languages": detected, "locations": locations[:3]})
         return detected
@@ -3342,6 +4481,58 @@ and confidence assessments. Follow the OUTPUT FORMAT specified above."""
             "corp": ["{q} brievenbusfirma offshore", "{q} witwassen", "{q} sancties"],
             "political": ["{q} overheidsopdracht", "{q} politieke corruptie"],
         },
+        # ── Hungarian (EU, Central Europe — child custody, corporate, political) ──
+        "hu": {
+            "countries": ["hungary", "magyarország", "budapest"],
+            "crime": [
+                "{q} ítélet bíróság",                 # verdict, court
+                "{q} körözés elfogatóparancs",         # warrant, arrest warrant
+                "{q} bűnügy nyomozás",                 # criminal case, investigation
+                "{q} letartóztatás őrizet",            # arrest, detention
+                "{q} gyermekrablás ügy",               # child abduction case
+            ],
+            "corp": [
+                "{q} offshore cég",                    # offshore company
+                "{q} pénzmosás",                       # money laundering
+                "{q} szankciók",                       # sanctions
+                "{q} cégjegyzék tulajdonos",           # company registry, owner
+                "{q} végrehajtás adósság",             # enforcement, debt
+            ],
+            "political": [
+                "{q} közbeszerzés szerződés",          # public procurement, contract
+                "{q} politikai korrupció",             # political corruption
+            ],
+        },
+        # ── Czech/Slovak (Central Europe — EU, corporate registries) ──
+        "cs": {
+            "countries": ["czech republic", "czechia", "slovakia", "slovak"],
+            "crime": [
+                "{q} rozsudek soud",                   # verdict, court
+                "{q} vyšetřování trestní",             # investigation, criminal
+                "{q} zatčení vazba",                   # arrest, custody
+            ],
+            "corp": [
+                "{q} offshore společnost",             # offshore company
+                "{q} praní špinavých peněz",           # money laundering
+                "{q} sankce obchodní rejstřík",        # sanctions, commercial registry
+            ],
+            "political": ["{q} veřejná zakázka", "{q} politická korupce"],
+        },
+        # ── Romanian (EU — Eastern Europe, cross-border crime) ──
+        "ro": {
+            "countries": ["romania", "moldova"],
+            "crime": [
+                "{q} condamnare instanță",             # conviction, court
+                "{q} anchetă cercetare penală",        # investigation, criminal inquiry
+                "{q} arestare mandat",                 # arrest, warrant
+            ],
+            "corp": [
+                "{q} firmă fantomă offshore",          # shell company, offshore
+                "{q} spălare de bani",                 # money laundering
+                "{q} sancțiuni registrul comerțului",  # sanctions, trade registry
+            ],
+            "political": ["{q} achiziție publică", "{q} corupție politică"],
+        },
     }
 
     @staticmethod
@@ -3458,49 +4649,21 @@ and confidence assessments. Follow the OUTPUT FORMAT specified above."""
         self, prompt: str, max_tokens: int = 4000, timeout: int = 60,
         system: str = "",
     ) -> str:
-        """Call DeepSeek API for reasoning/synthesis."""
-        import os as _os
-        import httpx
+        """Call LLM via provider config for reasoning/synthesis.
 
-        api_key = _os.environ.get("DEEPSEEK_API_KEY", "")
-        if not api_key:
-            logger.warning("no_deepseek_key")
-            return ""
+        Uses the same provider as _phase_analyze (WATSON_LLM_PROVIDER env var).
+        Falls back gracefully to empty string on any failure.
+        """
+        from .llm_config import call_llm
 
         if not system:
             system = "You are a professional OSINT intelligence analyst. Provide factual, sourced analysis. Never invent information."
 
-        messages = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": prompt},
-        ]
-
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=15.0)) as client:
-                resp = await client.post(
-                    "https://api.deepseek.com/v1/chat/completions",
-                    json={
-                        "model": "deepseek-chat",
-                        "messages": messages,
-                        "temperature": 0.3,
-                        "max_tokens": max_tokens,
-                    },
-                    headers={
-                        "Content-Type": "application/json",
-                        "Authorization": f"Bearer {api_key}",
-                    },
-                )
-                if resp.status_code != 200:
-                    body = resp.text[:200]
-                    logger.warning("deepseek_error: %s %s", resp.status_code, body)
-                    return ""
-                data = resp.json()
-                choices = data.get("choices", [])
-                if choices:
-                    return choices[0].get("message", {}).get("content", "")
-                return ""
+            result = await call_llm(prompt, timeout=timeout, max_tokens=max_tokens, system=system)
+            return result or ""
         except Exception as e:
-            logger.warning("deepseek_call_failed: %s", e)
+            logger.warning("llm_call_failed: %s", e)
             return ""
 
     @staticmethod
@@ -3587,7 +4750,26 @@ and confidence assessments. Follow the OUTPUT FORMAT specified above."""
         r"|^You have (?:provided|asked|given|shared)"
         r"|^I (?:cannot|can't|would need|require|must ask|am not|do not have)"
         r"|^Of course"
-        r"|^Based on the (?:provided|search|findings|available))",
+        r"|^Based on the (?:provided|search|findings|available)"
+        # ── Universal LLM garbage patterns (from Volodymyr investigation and beyond) ──
+        r"|^# (?:CRIMINAL|LEGAL|DEEP DIVE|INVESTIGATION|INTELLIGENCE|ANALYSIS)"
+        r"|^EXECUTIVE SUMMARY"
+        r"|^CONFIDENCE ASSESSMENT"
+        r"|^CROSS[- ]CONNECTIONS REPORT"
+        r"|^\d+\. (?:CHARGES|TRIALS|SENTENCING|FINES|FORFEITURE|ESCAPES|SANCTIONS|ASSOCIATES|FAMILY|ASSETS|NOVEL ANGLES)"
+        r"|^Connected Entity \d+:"
+        r"|^Connected Entity Analysis"
+        r"|^\|\s*FINDING\s*\|"  # Markdown tables
+        r"|^\|\s*CONNECTION\s*\|"
+        r"|^Question \d+: What"
+        r"|^No (?:specific|confirmed|known) "
+        r"|^CROSS[- ]CONNECTIONS"
+        r"|^## (?:Executive Summary|Risk Themes|Key Findings|Notable Entities|Evidence Gaps|Recommended|Methodology|Source Appendix|Data Ethics)"
+        r"|^I have (?:analyzed|reviewed|examined|synthesized)"
+        r"|^Let me (?:analyze|synthesize|summarize|break down)"
+        r"|^Here(?:'|\s*is) (?:a |my |the )?(?:summary|analysis|report|breakdown|synthesis)"
+        r"|^The (?:following|above|below) (?:analysis|report|summary|findings)"
+        r"|^(?:This|The) (?:report|analysis|investigation|brief|synthesis) (?:is|was|has been|provides|contains))",
         re.IGNORECASE,
     )
 
@@ -3642,10 +4824,120 @@ and confidence assessments. Follow the OUTPUT FORMAT specified above."""
             return True
         return False
 
+
     @staticmethod
-    def _filter_quality(findings: list) -> list:
+    def _relevance_score(target: str, text: str) -> float:
+        """Compute token-overlap relevance between target query and finding text.
+
+        Returns 0.0 – 1.0. A score of 0 means zero word overlap — the finding
+        is almost certainly unrelated (e.g., "Idaho murders" for "BÓDI Ildikó").
+        """
+        import unicodedata
+        if not target or not text:
+            return 0.0
+
+        # Normalize: lowercase, strip diacritics, split into tokens
+        def normalize(s: str) -> set[str]:
+            s = unicodedata.normalize('NFKD', s.lower())
+            s = ''.join(c for c in s if not unicodedata.combining(c))
+            # Extract alphanumeric tokens, min 2 chars
+            tokens = set()
+            for token in s.split():
+                token = ''.join(c for c in token if c.isalnum())
+                if len(token) >= 2:
+                    tokens.add(token)
+            return tokens
+
+        target_tokens = normalize(target)
+        if not target_tokens:
+            return 0.5  # Can't assess, don't penalize
+
+        text_tokens = normalize(text)
+        if not text_tokens:
+            return 0.0
+
+        # Jaccard similarity
+        intersection = target_tokens & text_tokens
+        union = target_tokens | text_tokens
+        return len(intersection) / len(union) if union else 0.0
+    @staticmethod
+    def _filter_irrelevant(findings: list, query: str) -> list:
+        """Drop findings with zero token overlap against the target query.
+
+        A finding about "Idaho murders" with no mention of "BÓDI" or "Ildikó"
+        should be dropped — it's a false positive from a scraper substring match.
+        Only drops findings with confidence < 0.65 to avoid removing legit
+        findings that use different terminology (e.g., an article about
+        "Hungarian mother wanted in Luxembourg" without the target's name).
+        """
+        kept = []
+        for f in findings:
+            combined_text = f"{f.title or ''} {f.description or ''}"
+            score = OrchestrationEngine._relevance_score(query, combined_text)
+
+            # If zero token overlap AND low confidence, it's almost certainly
+            # an unrelated false positive from scraper substring matching
+            if score == 0.0 and (f.confidence or 0.5) < 0.65:
+                continue
+
+            # If very low overlap (< 0.05) and no source URL, likely garbage
+            if score < 0.05 and not (f.source_url and f.source_url.startswith("http")):
+                continue
+
+            kept.append(f)
+        return kept
+
+
+    @staticmethod
+    def _dedupe_findings(findings: list) -> list:
+        """Remove duplicate findings by URL + title similarity.
+
+        Two findings are duplicates if:
+        - Same source URL, OR
+        - Title similarity > 80% (case-insensitive Jaccard on words)
+        """
+        if len(findings) <= 1:
+            return findings
+
+        seen_urls: set[str] = set()
+        seen_titles: list[set[str]] = []
+        deduped = []
+
+        for f in findings:
+            url = (f.source_url or "").strip().rstrip("/")
+            title_lower = (f.title or "").lower()
+            title_tokens = set(title_lower.split())
+
+            # Check URL duplicate
+            if url and url in seen_urls:
+                continue
+
+            # Check title similarity
+            is_dup = False
+            for prev_tokens in seen_titles:
+                if not title_tokens or not prev_tokens:
+                    continue
+                overlap = len(title_tokens & prev_tokens)
+                union = len(title_tokens | prev_tokens)
+                if union > 0 and overlap / union > 0.8:
+                    is_dup = True
+                    break
+
+            if is_dup:
+                continue
+
+            if url:
+                seen_urls.add(url)
+            seen_titles.append(title_tokens)
+            deduped.append(f)
+
+        return deduped
+
+    @staticmethod
+    def _filter_quality(findings: list, query: str = "") -> list:
         """Post-parse quality filter: remove findings that are just LLM commentary,
-        API-key-placeholder spam, or generic geolocation POI dumps with no target relevance.
+        API-key-placeholder spam, generic geolocation POI dumps, markdown tables,
+        self-assessment meta-reports, or evidence-gap placeholders.
 
         A finding passes quality if it has:
         - A source URL (real data), OR
@@ -3672,20 +4964,125 @@ and confidence assessments. Follow the OUTPUT FORMAT specified above."""
             "ice plant", "solar park", "puc",
             "jetty", "ferry", "passenger terminal",
         ]
+        # ── LLM garbage: section headers that leak as findings ──
+        SECTION_HEADERS = [
+            "executive summary", "confidence assessment",
+            "cross-connections report", "cross connections report",
+            "novel angles", "investigation questions",
+            "methodology", "source appendix", "data ethics",
+            # ── Leaked through BÓDI investigation ──
+            "connected entity analysis",
+            "cross-connections",
+            "key findings",
+            "risk themes",
+            "evidence gaps",
+            "recommended next steps",
+            "notable entities",
+            "findings summary",
+        ]
+        # ── Markdown table rows that leak as findings ──
+        TABLE_ROW_PATTERNS = [
+            "| finding |", "| connection |", "| source |",
+            "|---------|",  # Table separator
+        ]
+        # ── Self-directed questions ──
+        QUESTION_PATTERNS = [
+            "question 1:", "question 2:", "question 3:",
+            "what specific", "what cryptocurrency",
+            "which specific companies",
+        ]
+        # ── Gaps posing as findings ──
+        GAP_AS_FINDING = [
+            "no specific victim", "no specific ransom",
+            "no co-conspirator", "no cryptocurrency wallet",
+            "no current location", "no extradition",
+            "no family member", "no associate",
+            "no confirmed sanction", "no specific asset",
+            "no specific company", "no prison term",
+            "not in bop custody", "no trial has occurred",
+            "no court name", "no inmate number",
+            "no family members identified",
+            "no specific co-conspirator names",
+            "no specific fine", "no specific asset",
+            # ── Leaked through BÓDI Ildikó investigation ──
+            "no specific legal citations",
+            "no court identifiers",
+            "no child details",
+            "no father details",
+            "no financial information",
+            "no prior criminal history",
+            "no dark web indicators",
+            "no dark web",
+            # ── Universal gap patterns ──
+            "no confirmed indictment",
+            "no specific charges",
+            "no known associates",
+            "no current employment",
+            "no arrest record",
+            "no criminal record",
+            "no social media presence",
+            "no address found",
+            "no phone number",
+            "no email address",
+            "no domain registrations",
+            "no corporate filings",
+        ]
+        # ── How-to guides, login pages, tool homepages — noise when
+        #     DDG returns generic results instead of person-specific intel ──
+        HOW_TO_AND_LOGIN_NOISE_TITLES = [
+            "how do i log in", "how to find the owner",
+            "how to find out who owns", "sign in to ",
+            "gmail - google accounts", "accounts.google.com",
+            "search twitter posts", "free public twitter",
+            "a relentless interview", "sihirli annem",
+        ]
+        HOW_TO_AND_LOGIN_NOISE_DOMAINS = [
+            "androidpolice.com", "supereasy.com", "socialcatfish.com",
+            "x-sou.com", "xarchive.net", "skills.sh",
+        ]
 
         kept = []
         for f in findings:
-            # ── Drop: API key placeholder "findings" ──
             title_lower = (f.title or "").lower()
             desc_lower = (f.description or "").lower()
+
+            # ── Drop: API key placeholder "findings" ──
             if any(phrase in title_lower or phrase in desc_lower
                    for phrase in API_KEY_PLACEHOLDERS):
                 continue
 
             # ── Drop: geolocation POI dumps with no target connection ──
-            # These are Overpass queries blindly returning every quarry/factory
-            # near a coordinate — worthless for corporate/person investigations
             if any(noise in title_lower for noise in GEOLOCATION_NOISE):
+                continue
+
+            # ── Drop: how-to guides, login pages, tool homepages ──
+            if any(noise in title_lower for noise in HOW_TO_AND_LOGIN_NOISE_TITLES):
+                continue
+            source_url = getattr(f, "source_url", "") or ""
+            if any(d in source_url for d in HOW_TO_AND_LOGIN_NOISE_DOMAINS):
+                continue
+
+            # ── Drop: section headers leaked as findings ──
+            if any(title_lower.strip("# ").startswith(h) for h in SECTION_HEADERS):
+                continue
+
+            # ── Drop: markdown table rows ──
+            if any(p in title_lower for p in TABLE_ROW_PATTERNS):
+                continue
+            # Also catch: title IS a pipe-table row
+            if title_lower.strip().startswith("|"):
+                continue
+
+            # ── Drop: self-directed questions ──
+            if any(q in desc_lower for q in QUESTION_PATTERNS):
+                continue
+
+            # ── Drop: gaps posing as findings (negative findings with no source) ──
+            if any(g in title_lower for g in GAP_AS_FINDING) and not f.source_url:
+                continue
+
+            # ── Drop: "Connected Entity X:" synthesized summaries ──
+            if "connected entity" in title_lower and not f.source_url:
                 continue
 
             # Has a real URL → keep it
@@ -3725,6 +5122,20 @@ and confidence assessments. Follow the OUTPUT FORMAT specified above."""
                 f.confidence = min(f.confidence, 0.25)
 
             kept.append(f)
+
+        # ── Relevance check: universal pre-synthesis pipeline (any target type, any language) ──
+        if query:
+            try:
+                from ..pipeline import relevance_filter as _rf
+                kept, _dropped = _rf(kept, query)
+                if _dropped:
+                    logger.info("pre_synthesis_dropped: %d irrelevant findings for '%s'",
+                                len(_dropped), str(query)[:60])
+            except ImportError:
+                kept = OrchestrationEngine._filter_irrelevant(kept, query)
+
+        # ── Duplicate detection ──
+        kept = OrchestrationEngine._dedupe_findings(kept)
 
         return kept
 
@@ -3769,7 +5180,9 @@ and confidence assessments. Follow the OUTPUT FORMAT specified above."""
                     elif line.startswith("TIER:"):
                         tier_val = line[5:].strip().upper()
                         f.source_tier = tier_val if tier_val in ("PRIMARY", "SECONDARY", "TERTIARY", "UNVERIFIED") else "SECONDARY"
-                        tier_conf = {"PRIMARY": 0.95, "SECONDARY": 0.60, "TERTIARY": 0.35, "UNVERIFIED": 0.15}
+                        # Boosted: SECONDARY sources (Guardian, CSMonitor, BBC, etc.) with URLs
+                        # are as reliable as PRIMARY for most OSINT purposes.
+                        tier_conf = {"PRIMARY": 0.95, "SECONDARY": 0.75, "TERTIARY": 0.50, "UNVERIFIED": 0.25}
                         f.confidence = tier_conf.get(f.source_tier, 0.50)
                     elif line.startswith("CONFIDENCE:"):
                         conf_val = line[11:].strip().upper()
@@ -3783,6 +5196,10 @@ and confidence assessments. Follow the OUTPUT FORMAT specified above."""
                         urls = re.findall(r'https?://[^\s\)\]]+', f.description or "")
                         if urls:
                             f.source_url = urls[0]
+                    # URL boost: findings with verified source URLs are much more reliable.
+                    # SECONDARY (0.75) + URL → 0.90 (CONFIRMED). TERTIARY (0.50) + URL → 0.65.
+                    if f.source_url:
+                        f.confidence = min(0.99, f.confidence + 0.15)
                     findings.append(f)
             if findings:
                 return findings
@@ -3809,6 +5226,14 @@ and confidence assessments. Follow the OUTPUT FORMAT specified above."""
             title = re.sub(r'^\*+\s*', '', title)
             title = re.sub(r'\*+$', '', title)
             title = title[:200]
+
+            # ── Skip sections that are LLM meta-headers, tables, or self-talk ──
+            if self._is_llm_noise(title):
+                continue
+            # Also check first few lines for table content (Strategy 1 already handled
+            # structured FINDING: blocks, so tables leaking here are garbage)
+            if any(line.strip().startswith("|") for line in lines[:3]):
+                continue
 
             # Extract URLs
             urls = re.findall(r'https?://[^\s\)\]]+', section)
@@ -3883,6 +5308,17 @@ and confidence assessments. Follow the OUTPUT FORMAT specified above."""
             f"{f.title} {f.description}" for f in findings
         ).lower()
         return any(trigger in all_text for trigger in DARK_WEB_TRIGGERS)
+
+    def _save_and_update_graph(self, report: InvestigationReport):
+        """Offloaded from investigate() — save case + update graph in background."""
+        try:
+            self._save_case(report)
+        except Exception as e:
+            logger.warning("bg_save_case_failed: %s", e)
+        try:
+            self._update_graph(report)
+        except Exception as e:
+            logger.warning("bg_update_graph_failed: %s", e)
 
     def _save_case(self, report: InvestigationReport):
         """Save case markdown to disk."""
@@ -4129,7 +5565,7 @@ and confidence assessments. Follow the OUTPUT FORMAT specified above."""
                     "entities": len(entities),
                 })
             else:
-                logger.warning("mcp_publish_failed", extra={
+                logger.warning("mcp_publish_failed: status=%s url=%s", resp.status_code, mcp_url, extra={
                     "case_id": report.case_id,
                     "status": resp.status_code,
                 })

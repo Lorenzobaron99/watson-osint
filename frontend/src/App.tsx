@@ -29,11 +29,19 @@ function AppInner() {
   const [showWelcome, setShowWelcome] = React.useState(() => {
     return !localStorage.getItem("WATSON_ONBOARDED");
   });
+  const [graphData, setGraphData] = React.useState<{ entities: any[]; relations: any[] }>({
+    entities: [], relations: [],
+  });
 
   // Auto-switch to chat when twin investigation fires
   React.useEffect(() => {
     if (state.twinQuery) setCurrentTab("chat");
   }, [state.twinQuery]);
+
+  // ── Always-mounted components (SSE connections survive tab switches) ──
+  // WatsonChat owns the investigation EventSource — must never unmount mid-investigation.
+  // InvestigationMap receives live graph data — must stay mounted to accumulate entities.
+  // Both are hidden with CSS instead of conditionally rendered.
 
   const renderActiveTab = () => {
     switch (currentTab) {
@@ -51,16 +59,6 @@ function AppInner() {
             twinResult={state.twinResult}
           />
         );
-      case "map":
-        return (
-          <InvestigationMap
-            clues={state.clues}
-            suspects={state.suspects}
-            onAddClue={(clue) => dispatch({ type: "ADD_CLUE", clue })}
-            onDeleteClue={handleDeleteClue}
-            deductionProbability={state.deductionProbability}
-          />
-        );
       case "osint":
         return <ArchiveList />;
       case "personnel":
@@ -70,24 +68,11 @@ function AppInner() {
             onAddSuspect={handleAddSuspect}
           />
         );
+      // "chat" and "map" are always rendered below, just hidden when not active
       case "chat":
-        return (
-          <WatsonChat
-            onFindings={handleFindings}
-            onBriefEntities={handleBriefEntities}
-            twinQuery={state.twinQuery}
-            onTwinComplete={() => dispatch({ type: "SET_TWIN_QUERY", query: null })}
-          />
-        );
+      case "map":
       default:
-        return (
-          <WatsonChat
-            onFindings={handleFindings}
-            onBriefEntities={handleBriefEntities}
-            twinQuery={state.twinQuery}
-            onTwinComplete={() => dispatch({ type: "SET_TWIN_QUERY", query: null })}
-          />
-        );
+        return null;
     }
   };
 
@@ -171,7 +156,31 @@ function AppInner() {
       />
 
       <main className="lg:ml-64 pt-20 min-h-screen relative bg-background-dark select-none">
+        {/* Conditionally-rendered tabs (safe to unmount) */}
         {renderActiveTab()}
+
+        {/* ── Always-mounted: WatsonChat (SSE) ── */}
+        <div style={{ display: currentTab === "chat" ? "block" : "none" }}>
+          <WatsonChat
+            onFindings={handleFindings}
+            onBriefEntities={handleBriefEntities}
+            onGraphData={setGraphData}
+            twinQuery={state.twinQuery}
+            onTwinComplete={() => dispatch({ type: "SET_TWIN_QUERY", query: null })}
+          />
+        </div>
+
+        {/* ── Always-mounted: InvestigationMap (live graph) ── */}
+        <div style={{ display: currentTab === "map" ? "block" : "none" }}>
+          <InvestigationMap
+            clues={state.clues}
+            suspects={state.suspects}
+            onAddClue={(clue) => dispatch({ type: "ADD_CLUE", clue })}
+            onDeleteClue={handleDeleteClue}
+            deductionProbability={state.deductionProbability}
+            graphData={graphData}
+          />
+        </div>
       </main>
 
       {state.settingsOpen && (
@@ -187,6 +196,7 @@ function AppInner() {
             localStorage.setItem("WATSON_ONBOARDED", "true");
             setShowWelcome(false);
           }}
+          onOpenSettings={() => dispatch({ type: "SET_SETTINGS_OPEN", open: true })}
         />
       )}
     </div>
