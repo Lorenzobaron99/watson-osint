@@ -520,7 +520,7 @@ export default function WatsonChat({
       {/* Mode selector — Watson-themed segmented control */}
       <div className="flex items-center justify-center">
         <div className="inline-flex bg-surface-container-high border border-outline-variant/60 rounded-lg p-0.5">
-          {(["background_check", "due_diligence", "deep_investigation"] as const).map((m) => {
+          {(["deep_investigation", "due_diligence", "background_check"] as const).map((m) => {
             const labels: Record<string, { icon: string; label: string; desc: string }> = {
               background_check: { icon: "⚡", label: "Quick", desc: "30–60s · Surface scan" },
               due_diligence: { icon: "📋", label: "Diligence", desc: "2–5 min · Business, media" },
