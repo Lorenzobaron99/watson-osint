@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Archive, FileText, Calendar, Target, ShieldCheck, ExternalLink, RefreshCw } from "lucide-react";
+import { Archive, FileText, Calendar, Target, ShieldCheck, ExternalLink, RefreshCw, Download } from "lucide-react";
 
 interface CaseItem {
   id: string;
@@ -171,7 +171,23 @@ export default function ArchiveList() {
 
               {selectedCase === c.id && caseContent && (
                 <div className="mt-2 ml-4 p-4 border-l-2 border-primary/30 bg-surface-container-low rounded-r-lg overflow-x-auto max-h-[60vh] overflow-y-auto">
-                  <pre className="text-on-surface text-xs font-mono whitespace-pre-wrap leading-relaxed">
+                  <div className="flex justify-end mb-2">
+                    <button
+                      onClick={() => {
+                        const blob = new Blob([caseContent], { type: "text/markdown" });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = `${c.id}.md`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                      }}
+                      className="flex items-center gap-1 px-2 py-1 text-[10px] font-label-caps bg-primary/10 border border-primary/30 text-primary rounded hover:bg-primary/20 transition-all cursor-pointer"
+                    >
+                      <Download size={12} /> Export
+                    </button>
+                  </div>
+                  <pre className="text-on-surface text-xs font-mono whitespace-pre-wrap leading-relaxed break-all">
                     {caseContent}
                   </pre>
                 </div>

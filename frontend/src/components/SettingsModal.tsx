@@ -148,22 +148,27 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         </div>
 
         {/* LLM Provider — model-agnostic, required */}
-        <div className="bg-surface-dark/30 border border-primary/20 rounded p-3">
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-primary text-[9px] font-bold uppercase tracking-wider bg-primary/10 px-1.5 py-0.5 rounded">REQUIRED</span>
-            <label className="font-technical text-[10px] text-primary uppercase tracking-wider">LLM Provider — Reasoning Engine</label>
+        <div className="bg-surface-dark/40 border border-primary/20 rounded-lg p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <span className="text-primary text-[9px] font-bold uppercase tracking-wider bg-primary/10 px-2 py-0.5 rounded">REQUIRED</span>
+            <span className="font-technical text-[10px] text-primary uppercase tracking-wider">Intelligence Engine</span>
           </div>
-          <div className="flex gap-2 mb-2">
+          <p className="text-[10px] text-on-surface-variant leading-relaxed">
+            Watson is provider-agnostic. Choose any LLM — DeepSeek (free tier), OpenAI, Anthropic, OpenRouter, or local Hermes.
+          </p>
+          
+          {/* Provider + Model row */}
+          <div className="flex gap-2">
             <select value={llmProvider} onChange={e => setLlmProvider(e.target.value)}
-              className="bg-surface-dark border border-outline-variant/60 rounded p-2 text-[11px] font-technical text-primary focus:ring-1 focus:ring-primary focus:border-primary outline-none cursor-pointer">
+              className="bg-surface-dark border border-outline-variant/60 rounded-lg p-2.5 text-[11px] font-technical text-primary focus:ring-1 focus:ring-primary focus:border-primary outline-none cursor-pointer min-w-[130px]">
               {llmProviders.map(k => (
                 <option key={k.slug} value={k.slug}>{k.label}</option>
               ))}
             </select>
-            <input type="text" placeholder="Model (e.g. deepseek-chat, gpt-4o-mini)…"
+            <input type="text" placeholder="Model name…"
               value={llmModel} onChange={e => setLlmModel(e.target.value)}
               list="model-suggestions"
-              className="flex-1 bg-surface-dark border border-outline-variant/60 rounded p-2 text-[11px] font-technical text-primary focus:ring-1 focus:ring-primary focus:border-primary outline-none" />
+              className="flex-1 bg-surface-dark border border-outline-variant/60 rounded-lg p-2.5 text-[11px] font-technical text-primary focus:ring-1 focus:ring-primary focus:border-primary outline-none" />
             <datalist id="model-suggestions">
               {(llmProvider === "deepseek" ? ["deepseek-chat", "deepseek-reasoner"] :
                 llmProvider === "openai" ? ["gpt-4o-mini", "gpt-4o", "gpt-4.1"] :
@@ -173,8 +178,9 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
               ).map(m => <option key={m} value={m} />)}
             </datalist>
           </div>
+          
           {/* Quick-pick model chips */}
-          <div className="flex flex-wrap gap-1 mb-2">
+          <div className="flex flex-wrap gap-1.5">
             {(llmProvider === "deepseek" ? ["deepseek-chat", "deepseek-reasoner"] :
               llmProvider === "openai" ? ["gpt-4o-mini", "gpt-4o", "gpt-4.1"] :
               llmProvider === "anthropic" ? ["claude-sonnet-4-20250514", "claude-opus-4-20250514"] :
@@ -182,30 +188,33 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
               []
             ).map(m => (
               <button key={m} type="button" onClick={() => setLlmModel(m)}
-                className={`px-2 py-0.5 text-[9px] font-technical rounded border cursor-pointer transition-all ${
+                className={`px-2.5 py-1 text-[10px] font-technical rounded-full border cursor-pointer transition-all ${
                   llmModel === m 
-                    ? "bg-primary/20 border-primary text-primary" 
+                    ? "bg-primary text-background-dark border-primary font-bold shadow-sm" 
                     : "bg-surface-dark border-outline-variant/40 text-on-surface-variant hover:border-primary/50 hover:text-primary"
                 }`}>
                 {m}
               </button>
             ))}
           </div>
-          <div className="flex gap-2 mb-2">
+          
+          {/* API Key row */}
+          <div className="flex gap-2">
             <input type="password" placeholder="Paste your API key…"
               value={llmKey} onChange={e => setLlmKey(e.target.value)}
-              className="flex-1 bg-surface-dark border border-outline-variant/60 rounded p-2 text-[11px] font-technical text-primary focus:ring-1 focus:ring-primary focus:border-primary outline-none" />
+              className="flex-1 bg-surface-dark border border-outline-variant/60 rounded-lg p-2.5 text-[11px] font-technical text-primary focus:ring-1 focus:ring-primary focus:border-primary outline-none" />
             <button type="button" onClick={handleSaveLLM}
-              className="px-3 py-1 text-[10px] font-bold bg-primary text-background-dark hover:brightness-110 rounded cursor-pointer flex items-center gap-1 transition-all shrink-0">
-              {saved.llm ? <><Check size={10} /> SAVED</> : "SAVE"}
+              className="px-4 py-2.5 text-[11px] font-bold bg-primary text-background-dark hover:brightness-110 rounded-lg cursor-pointer flex items-center gap-1.5 transition-all shrink-0 shadow-sm">
+              {saved.llm ? <><Check size={12} /> SAVED</> : "SAVE"}
             </button>
           </div>
-          <p className="text-[9px] text-on-surface-variant">
-            Watson is provider-agnostic — choose any. DeepSeek offers a free tier. OpenAI, Anthropic, OpenRouter, or local Hermes all work.
-            {llmProviders.find(p => p.slug === llmProvider)?.get_key_url && (
-              <> <a href={llmProviders.find(p => p.slug === llmProvider)!.get_key_url} target="_blank" className="text-primary hover:underline">Get a key →</a></>
-            )}
-          </p>
+          
+          {llmProviders.find(p => p.slug === llmProvider)?.get_key_url && (
+            <a href={llmProviders.find(p => p.slug === llmProvider)!.get_key_url} target="_blank" 
+              className="text-[10px] text-primary hover:underline inline-flex items-center gap-1">
+              Get an API key → <span className="text-on-surface-variant/50">({llmProvider})</span>
+            </a>
+          )}
         </div>
 
         {loading ? (

@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/osintengine/"><img src="https://img.shields.io/badge/pypi-v1.0.3-blue" alt="PyPI"></a>
+  <a href="https://pypi.org/project/osintengine/"><img src="https://img.shields.io/badge/pypi-v1.0.7-blue" alt="PyPI"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-green" alt="License"></a>
   <a href="https://github.com/Lorenzobaron99/watson-osint"><img src="https://img.shields.io/badge/status-active-brightgreen" alt="Status"></a>
@@ -22,6 +22,8 @@
 Most tools give you a search bar. Watson gives you a forensics lab. It runs a 7-phase intelligence pipeline across 16+ data sources, cross-references every finding, builds a persistent knowledge graph that remembers across cases, and produces a structured intelligence brief — not a list of links.
 
 One target. One command. A dossier that would take an analyst hours.
+
+> **Why I built this.** OSINT tools fall into two camps: shallow search engines that return links, and expensive enterprise platforms locked behind sales calls. There's no open, production-grade investigation engine that chains 16+ data sources, cross-references findings, remembers across cases, and produces real intelligence briefs — not just lists of URLs. Watson fills that gap. It's free, open-source, model-agnostic, and runs on your machine. No cloud dependency. No vendor lock-in. Just answers.
 
 ---
 
@@ -40,7 +42,11 @@ One target. One command. A dossier that would take an analyst hours.
 ## Quick Start
 
 ```bash
+# pip
 pip install osintengine
+
+# or uv (recommended)
+uv pip install osintengine
 
 # First-time setup (60 seconds)
 watson onboard

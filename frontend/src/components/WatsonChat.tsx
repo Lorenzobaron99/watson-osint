@@ -71,10 +71,10 @@ export default function WatsonChat({
   const [clientId, setClientId] = useState<string>("");
   const [steerText, setSteerText] = useState("");
   const [mode, setMode] = useState<string>(() =>
-    localStorage.getItem("WATSON_MODE") || "background_check"
+    localStorage.getItem("WATSON_MODE") || "deep_investigation"
   );
   const [publishToGraph, setPublishToGraph] = useState<boolean>(() =>
-    localStorage.getItem("WATSON_PUBLISH_GRAPH") === "true"
+    localStorage.getItem("WATSON_PUBLISH_GRAPH") !== "false"
   );
   const [graphStatus, setGraphStatus] = useState<{
     connected: boolean; configured: boolean; reason: string;
@@ -83,6 +83,27 @@ export default function WatsonChat({
   const [graphRelations, setGraphRelations] = useState<GraphRelation[]>([]);
   const [graphExpanded, setGraphExpanded] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+  const userScrolledUp = useRef(false);
+
+  // ── Smart scroll: auto-follow only when user is at the bottom ──
+  useEffect(() => {
+    const container = chatContainerRef.current;
+    if (!container) return;
+    const atBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 80;
+    if (!userScrolledUp.current || atBottom) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      userScrolledUp.current = false;
+    }
+  }, [messages, loading, progressLog]);
+
+  // Track user manual scroll
+  const handleChatScroll = () => {
+    const el = chatContainerRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    userScrolledUp.current = !atBottom;
+  };
   const activeEventSourceRef = useRef<EventSource | null>(null);
 
   // Cleanup SSE on unmount
@@ -125,10 +146,6 @@ export default function WatsonChat({
       localStorage.setItem("WATSON_CHAT_HISTORY", JSON.stringify(messages.slice(-50)));
     }
   }, [messages]);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, loading, progressLog]);
 
   // Auto-fire twin investigation when triggered from Case Board
   const twinFiredRef = useRef(false);
@@ -471,44 +488,62 @@ export default function WatsonChat({
             "Enter a target — person, company, domain, email, crypto wallet. Watson investigates autonomously."
           </p>
         </div>
-        <button
-          onClick={handleClearHistory}
-          className="px-3 py-1.5 text-xs font-label-caps border border-outline-variant text-on-surface-variant hover:text-red-400 hover:bg-red-500/10 rounded flex items-center gap-1.5 transition-all cursor-pointer"
-        >
-          <Trash2 size={13} />
-          <span className="hidden sm:inline">Clear History</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              setMessages([{
+                id: "welcome",
+                role: "watson",
+                text: getWelcomeText(),
+                timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+              }]);
+              setGraphEntities([]);
+              setGraphRelations([]);
+              setWatsonError(null);
+            }}
+            className="px-3 py-1.5 text-xs font-label-caps border border-primary/40 text-primary hover:bg-primary/10 rounded flex items-center gap-1.5 transition-all cursor-pointer"
+            title="Start a fresh investigation"
+          >
+            <RefreshCw size={13} />
+            <span className="hidden sm:inline">New</span>
+          </button>
+          <button
+            onClick={handleClearHistory}
+            className="px-3 py-1.5 text-xs font-label-caps border border-outline-variant text-on-surface-variant hover:text-red-400 hover:bg-red-500/10 rounded flex items-center gap-1.5 transition-all cursor-pointer"
+          >
+            <Trash2 size={13} />
+            <span className="hidden sm:inline">Clear</span>
+          </button>
+        </div>
       </div>
 
-      {/* Mode selector */}
-      <div className="flex items-center justify-center gap-0">
-        {(["background_check", "due_diligence", "deep_investigation"] as const).map((m) => {
-          const labels: Record<string, { icon: string; label: string; desc: string }> = {
-            background_check: { icon: "⚡", label: "Quick Check", desc: "30-60s · Identity, sanctions, PEP" },
-            due_diligence: { icon: "📋", label: "Due Diligence", desc: "2-5 min · Business, financial, media" },
-            deep_investigation: { icon: "🔬", label: "Deep", desc: "5-15 min · Full dossier, all languages" },
-          };
-          const isActive = mode === m;
-          return (
-            <button
-              key={m}
-              onClick={() => {
-                setMode(m);
-                localStorage.setItem("WATSON_MODE", m);
-              }}
-              title={labels[m].desc}
-              className={`px-3 py-1.5 text-[11px] font-medium border transition-all cursor-pointer
-                ${isActive
-                  ? "bg-primary/20 border-primary text-primary font-bold"
-                  : "bg-transparent border-outline-variant/40 text-on-surface-variant/60 hover:text-on-surface-variant hover:border-outline-variant"}
-                ${m === "background_check" ? "rounded-l-md" : ""}
-                ${m === "deep_investigation" ? "rounded-r-md" : ""}
-              `}
-            >
-              <span className="hidden sm:inline">{labels[m].icon} </span>{labels[m].label}
-            </button>
-          );
-        })}
+      {/* Mode selector — Watson-themed segmented control */}
+      <div className="flex items-center justify-center">
+        <div className="inline-flex bg-surface-container-high border border-outline-variant/60 rounded-lg p-0.5 shadow-inner">
+          {(["background_check", "due_diligence", "deep_investigation"] as const).map((m) => {
+            const labels: Record<string, { icon: string; label: string; desc: string }> = {
+              background_check: { icon: "⚡", label: "Quick", desc: "30–60s · Surface scan" },
+              due_diligence: { icon: "📋", label: "Diligence", desc: "2–5 min · Business, media" },
+              deep_investigation: { icon: "🔬", label: "Deep", desc: "5–15 min · Full dossier" },
+            };
+            const isActive = mode === m;
+            return (
+              <button
+                key={m}
+                onClick={() => { setMode(m); localStorage.setItem("WATSON_MODE", m); }}
+                title={labels[m].desc}
+                className={`px-4 py-2 text-[11px] font-medium rounded-md transition-all duration-200 cursor-pointer ${
+                  isActive
+                    ? "bg-primary text-background-dark font-bold shadow-md"
+                    : "text-on-surface-variant/70 hover:text-on-surface hover:bg-surface-container"
+                }`}
+              >
+                <span className="hidden sm:inline mr-1">{labels[m].icon}</span>
+                {labels[m].label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Publish consent toggle */}
@@ -539,7 +574,7 @@ export default function WatsonChat({
 
       <div className="flex-1 flex flex-col border border-outline-variant rounded bg-surface-container/40 overflow-hidden shadow-2xl h-[55vh] min-h-[400px]">
         {/* Chat Stream */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-6 select-text">
+        <div className="flex-1 overflow-y-auto p-5 space-y-6 select-text" ref={chatContainerRef} onScroll={handleChatScroll}>
           {messages.map((msg) => {
             const isWatson = msg.role === "watson";
             return (
@@ -605,8 +640,8 @@ export default function WatsonChat({
                             <div className="text-[11px] font-bold text-on-surface">{f.title}</div>
                             <div className="text-[10px] text-on-surface-variant line-clamp-2">{f.description}</div>
                             {f.source_url && (
-                              <a href={f.source_url} target="_blank" rel="noopener noreferrer" className="text-[9px] text-primary hover:underline mt-1 inline-block">
-                                {f.source_url.substring(0, 60)}...
+                              <a href={f.source_url} target="_blank" rel="noopener noreferrer" className="text-[9px] text-primary hover:underline mt-1 inline-block break-all">
+                                {f.source_url}
                               </a>
                             )}
                           </div>
@@ -783,6 +818,16 @@ export default function WatsonChat({
                   entities={graphEntities}
                   relations={graphRelations}
                   compact
+                  onExport={() => {
+                    const data = { entities: graphEntities, relations: graphRelations, exported_at: new Date().toISOString() };
+                    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `watson-graph-${Date.now()}.json`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
                 />
               </div>
             )}

@@ -119,6 +119,7 @@ interface EntityGraphProps {
   compact?: boolean;
   onEntityClick?: (entity: GraphEntity) => void;
   onEntityDoubleClick?: (entity: GraphEntity) => void;
+  onExport?: () => void;
 }
 
 export default function EntityGraph({
@@ -127,6 +128,7 @@ export default function EntityGraph({
   compact = false,
   onEntityClick,
   onEntityDoubleClick,
+  onExport,
 }: EntityGraphProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -382,10 +384,12 @@ export default function EntityGraph({
         <button
           onClick={() => setViewBox(p => ({ ...p, w: p.w * 0.8, h: p.h * 0.8 }))}
           className="w-6 h-6 bg-surface-container-highest/80 border border-outline-variant/60 rounded-l text-on-surface-variant text-xs hover:text-primary flex items-center justify-center"
+          title="Zoom in"
         >+</button>
         <button
           onClick={() => setViewBox(p => ({ ...p, w: p.w * 1.25, h: p.h * 1.25 }))}
           className="w-6 h-6 bg-surface-container-highest/80 border border-outline-variant/60 rounded-r text-on-surface-variant text-xs hover:text-primary flex items-center justify-center"
+          title="Zoom out"
         >−</button>
         <button
           onClick={() => {
@@ -395,6 +399,13 @@ export default function EntityGraph({
           className="w-7 h-6 bg-surface-container-highest/80 border border-outline-variant/60 rounded text-on-surface-variant text-[9px] hover:text-primary flex items-center justify-center ml-1"
           title="Reset view"
         >↺</button>
+        {onExport && (
+          <button
+            onClick={onExport}
+            className="w-7 h-6 bg-primary/20 border border-primary/40 rounded text-primary text-[9px] hover:bg-primary/30 flex items-center justify-center ml-1"
+            title="Export graph data as JSON"
+          >⇩</button>
+        )}
       </div>
 
       {/* Selected entity tooltip */}

@@ -117,12 +117,33 @@ export default function InvestigationMap({
       {hasGraph ? (
         <div className="bg-surface-container/60 backdrop-blur border border-outline-variant/60 rounded overflow-hidden">
           <div className="px-4 py-2 border-b border-outline-variant/40 flex items-center justify-between">
-            <span className="font-technical text-xs text-primary uppercase tracking-wider">
-              Entity Graph
-            </span>
-            <span className="font-technical text-[10px] text-on-surface-variant">
-              {graphData!.entities.length} entities · {graphData!.relations.length} relations
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="font-technical text-xs text-primary uppercase tracking-wider">
+                🔗 Investigation Entity Graph
+              </span>
+              <span className="text-[9px] text-amber-400/60 font-technical">LIVE</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="font-technical text-[10px] text-on-surface-variant">
+                {graphData!.entities.length} entities · {graphData!.relations.length} relations
+              </span>
+              <button
+                onClick={() => {
+                  const data = { entities: graphData!.entities, relations: graphData!.relations, exported_at: new Date().toISOString() };
+                  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `watson-graph-${Date.now()}.json`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+                className="px-2 py-0.5 text-[9px] font-label-caps bg-primary/10 border border-primary/30 text-primary rounded hover:bg-primary/20 cursor-pointer"
+                title="Export graph as JSON"
+              >
+                Export
+              </button>
+            </div>
           </div>
           <EntityGraph
             entities={graphData!.entities}
@@ -159,8 +180,13 @@ export default function InvestigationMap({
       )}
 
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
-        {/* Left Column: Interactive Map Grid */}
+        {/* Left Column: Interactive Case Map */}
         <div className="xl:col-span-8 flex flex-col gap-4">
+          <div className="flex items-center gap-3 pt-2 border-t border-outline-variant/30">
+            <span className="font-technical text-xs text-primary uppercase tracking-wider">📍 Case Pin Map</span>
+            <span className="h-px flex-1 bg-outline-variant/20" />
+            <span className="text-[9px] text-on-surface-variant/50 font-technical">MANUAL EVIDENCE PINS</span>
+          </div>
           <div className="text-xs font-body-sm text-on-surface-variant italic">
             💡 <span className="text-primary font-bold">Tip:</span> Click anywhere on the map to pin custom coordinates and twine them into the network!
           </div>
