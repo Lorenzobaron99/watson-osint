@@ -1,7 +1,7 @@
 # 🕵️ Watson — The OSINT Investigation Engine
 
 <p align="center">
-  <img src="holmes-watch.jpg" alt="Holmes pulled out his watch — Sidney Paget, 1893" width="480" style="border-radius: 8px;">
+  <img src="holmes-watch.jpg" alt="Holmes pulled out his watch — Sidney Paget, 1893" width="240" style="border-radius: 8px;">
 </p>
 
 <p align="center">
@@ -14,7 +14,7 @@
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-green" alt="License"></a>
   <a href="https://github.com/Lorenzobaron99/watson-osint"><img src="https://img.shields.io/badge/status-active-brightgreen" alt="Status"></a>
-  <a href="http://localhost:8777"><img src="https://img.shields.io/badge/website-localhost%3A8777-amber" alt="Website"></a>
+  <a href="https://lorenzobaron99.github.io/watson#community"><img src="https://img.shields.io/badge/website-watson--osint-amber" alt="Website"></a>
 </p>
 
 ---
