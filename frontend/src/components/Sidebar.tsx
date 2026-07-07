@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Users, Key, ChevronDown, Map as MapIcon, LayoutGrid, BookOpen, HelpCircle, FolderOpen, Check, MessageSquare } from "lucide-react";
 
 interface SidebarProps {
@@ -26,17 +26,20 @@ export default function Sidebar({ currentTab, setCurrentTab, deductionProbabilit
 
   useEffect(() => {
     const quote = SHERLOCK_QUOTES[Math.floor(Math.random() * SHERLOCK_QUOTES.length)];
-    let index = 0;
     setTypedTitle("");
-    const interval = setInterval(() => {
-      if (index < quote.length) {
-        setTypedTitle(prev => prev + quote.charAt(index));
-        index++;
-      } else {
-        clearInterval(interval);
-      }
-    }, 30);
-    return () => clearInterval(interval);
+    const timeout = setTimeout(() => {
+      const idx = { current: 0 };
+      const interval = setInterval(() => {
+        if (idx.current < quote.length) {
+          setTypedTitle(quote.slice(0, idx.current + 1));
+          idx.current++;
+        } else {
+          clearInterval(interval);
+        }
+      }, 30);
+      return () => clearInterval(interval);
+    }, 50);
+    return () => clearTimeout(timeout);
   }, []);
 
   // Fetch active LLM model from backend
