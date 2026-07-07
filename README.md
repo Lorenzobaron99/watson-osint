@@ -1,7 +1,7 @@
 # 🕵️ Watson — The OSINT Investigation Engine
 
 <p align="center">
-  <img src="watson/web/static/assets/holmes-watch.jpg" alt="Holmes pulled out his watch — Sidney Paget, 1893" width="480" style="border-radius: 8px;">
+  <img src="holmes-watch.jpg" alt="Holmes pulled out his watch — Sidney Paget, 1893" width="480" style="border-radius: 8px;">
 </p>
 
 <p align="center">
