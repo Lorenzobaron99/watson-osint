@@ -21,15 +21,15 @@ export interface GraphRelation {
 // ── Watson-themed entity colors (dark, elegant, muted) ──
 
 const ENTITY_COLORS: Record<string, { fill: string; glow: string; ring: string }> = {
-  person:       { fill: "#D97706", glow: "rgba(217,119,6,0.3)",  ring: "rgba(217,119,6,0.5)" },
-  domain:       { fill: "#60A5FA", glow: "rgba(96,165,250,0.3)",  ring: "rgba(96,165,250,0.5)" },
-  ip_address:   { fill: "#34D399", glow: "rgba(52,211,153,0.3)",  ring: "rgba(52,211,153,0.5)" },
-  organization: { fill: "#A78BFA", glow: "rgba(167,139,250,0.3)", ring: "rgba(167,139,250,0.5)" },
-  email:        { fill: "#F87171", glow: "rgba(248,113,113,0.3)", ring: "rgba(248,113,113,0.5)" },
-  location:     { fill: "#FBBF24", glow: "rgba(251,191,36,0.3)",  ring: "rgba(251,191,36,0.5)" },
-  website:      { fill: "#22D3EE", glow: "rgba(34,211,238,0.3)",  ring: "rgba(34,211,238,0.5)" },
-  document:     { fill: "#9CA3AF", glow: "rgba(156,163,175,0.3)", ring: "rgba(156,163,175,0.5)" },
-  unknown:      { fill: "#6B7280", glow: "rgba(107,114,128,0.3)", ring: "rgba(107,114,128,0.5)" },
+  person:       { fill: "#c8944c", glow: "rgba(200,148,76,0.25)",  ring: "rgba(200,148,76,0.4)" },
+  domain:       { fill: "#5b8fbf", glow: "rgba(91,143,191,0.25)",  ring: "rgba(91,143,191,0.4)" },
+  ip_address:   { fill: "#4a9e7e", glow: "rgba(74,158,126,0.25)",  ring: "rgba(74,158,126,0.4)" },
+  organization: { fill: "#8c7ab5", glow: "rgba(140,122,181,0.25)", ring: "rgba(140,122,181,0.4)" },
+  email:        { fill: "#c46b6b", glow: "rgba(196,107,107,0.25)", ring: "rgba(196,107,107,0.4)" },
+  location:     { fill: "#c4a44c", glow: "rgba(196,164,76,0.25)",  ring: "rgba(196,164,76,0.4)" },
+  website:      { fill: "#4a9e9e", glow: "rgba(74,158,158,0.25)",  ring: "rgba(74,158,158,0.4)" },
+  document:     { fill: "#7a7a7a", glow: "rgba(122,122,122,0.25)", ring: "rgba(122,122,122,0.4)" },
+  unknown:      { fill: "#5a5a5a", glow: "rgba(90,90,90,0.25)",   ring: "rgba(90,90,90,0.4)" },
 };
 
 const ENTITY_RADIUS: Record<string, number> = {
@@ -363,17 +363,26 @@ export default function EntityGraph({
               >
                 {ENTITY_EMOJI[entity.type] || "●"}
               </text>
-              {/* Label */}
-              <text x={pos.x} y={pos.y + radius + (compact ? 2.2 : 3)}
+              {/* Label — with subtle backdrop for readability */}
+              <text x={pos.x} y={pos.y + radius + (compact ? 2.5 : 3.5)}
                 textAnchor="middle"
-                fill="rgba(255,255,255,0.6)"
-                fontSize={compact ? 1.8 : 2.2}
+                fill="rgba(229,226,225,0.75)"
+                fontSize={compact ? 2.0 : 2.5}
                 className="pointer-events-none font-technical"
               >
                 {entity.label?.length > (compact ? 12 : 18)
                   ? entity.label.slice(0, (compact ? 11 : 17)) + "…"
                   : entity.label}
               </text>
+              {/* Label background pill for primary node */}
+              {isPrimary && entity.label && (
+                <rect
+                  x={pos.x - entity.label.length * 0.55} y={pos.y + radius + 2}
+                  width={entity.label.length * 1.1} height={2.8}
+                  rx={1} fill="rgba(0,0,0,0.5)"
+                  className="pointer-events-none"
+                />
+              )}
             </g>
           );
         })}
@@ -414,7 +423,7 @@ export default function EntityGraph({
         if (!entity) return null;
         const colors = ENTITY_COLORS[entity.type] || ENTITY_COLORS.unknown;
         return (
-          <div className="absolute bottom-10 left-2 right-16 bg-surface-container-highest/95 backdrop-blur border border-outline-variant/60 rounded p-2.5 z-10 max-w-[220px]">
+          <div className="absolute bottom-10 left-2 right-16 bg-surface-container-highest border border-outline-variant/60 rounded p-2.5 z-10 max-w-[220px]">
             <div className="flex items-center gap-1.5 mb-1">
               <span className="w-2 h-2 rounded-full" style={{ backgroundColor: colors.fill }} />
               <span className="font-technical text-[9px] text-primary uppercase tracking-wider">{entity.type}</span>

@@ -253,8 +253,8 @@ export default function CaseBoard({
               <div
                 key={clue.id}
                 onClick={() => handleTwineClick(clue.id)}
-                className={`tactile-paper p-5 flex flex-col justify-between transition-all duration-300 relative group cursor-pointer shadow-lg ${
-                  isSelected ? "ring-2 ring-red-500/90 border-red-500" : "hover:-translate-y-1 hover:shadow-xl hover:border-primary/50"
+                className={`tactile-paper p-5 flex flex-col justify-between transition-all duration-200 relative group cursor-pointer ${
+                  isSelected ? "ring-2 ring-red-500/90 border-red-500" : "hover:border-primary/50"
                 }`}
               >
                 {/* Vintage Pushpin Simulation */}

@@ -519,7 +519,7 @@ export default function WatsonChat({
 
       {/* Mode selector — Watson-themed segmented control */}
       <div className="flex items-center justify-center">
-        <div className="inline-flex bg-surface-container-high border border-outline-variant/60 rounded-lg p-0.5 shadow-inner">
+        <div className="inline-flex bg-surface-container-high border border-outline-variant/60 rounded-lg p-0.5">
           {(["background_check", "due_diligence", "deep_investigation"] as const).map((m) => {
             const labels: Record<string, { icon: string; label: string; desc: string }> = {
               background_check: { icon: "⚡", label: "Quick", desc: "30–60s · Surface scan" },
@@ -572,7 +572,7 @@ export default function WatsonChat({
         </span>
       </div>
 
-      <div className="flex-1 flex flex-col border border-outline-variant rounded bg-surface-container/40 overflow-hidden shadow-lg h-[55vh] min-h-[400px]">
+      <div className="flex-1 flex flex-col border border-outline-variant rounded bg-surface-container/40 overflow-hidden h-[55vh] min-h-[400px]">
         {/* Chat Stream */}
         <div className="flex-1 overflow-y-auto p-5 space-y-6 select-text" ref={chatContainerRef} onScroll={handleChatScroll}>
           {messages.map((msg) => {
@@ -781,7 +781,7 @@ export default function WatsonChat({
 
           {/* Error notice */}
           {watsonError && (
-            <div className="sticky bottom-2 mx-auto max-w-sm bg-red-950/60 border border-red-500/50 p-2.5 rounded flex items-center justify-between text-[11px] font-technical text-red-400 gap-2 backdrop-blur-md">
+            <div className="sticky bottom-2 mx-auto max-w-sm bg-red-950/80 border border-red-500/50 p-2.5 rounded flex items-center justify-between text-[11px] font-technical text-red-400 gap-2">
               <div className="flex items-center gap-1.5">
                 <AlertCircle size={14} />
                 <span>{watsonError}</span>

@@ -194,7 +194,7 @@ export default function InvestigationMap({
           <div 
             ref={mapContainerRef}
             onClick={handleMapClick}
-            className="relative h-[450px] bg-surface-container-low border border-outline-variant rounded overflow-hidden shadow-2xl cursor-crosshair group select-none"
+            className={`relative h-[450px] bg-surface-container-low border border-outline-variant rounded overflow-hidden cursor-crosshair group select-none`}
           >
             <div className="absolute inset-0 bg-radial-[circle_at_center,rgba(0,0,0,0.2)_0%,rgba(0,0,0,0.8)_100%] pointer-events-none z-10" />
             <img 
@@ -268,7 +268,7 @@ export default function InvestigationMap({
 
         {/* Right Column */}
         <div className="xl:col-span-4 space-y-6">
-          <div className="bg-surface-container/60 border border-outline-variant/60 p-4 rounded flex flex-col items-center justify-center text-center shadow-lg relative floating-node" style={{ animationDelay: "-2s" }}>
+          <div className="bg-surface-container/60 border border-outline-variant/60 p-4 rounded flex flex-col items-center justify-center text-center">
             <div className="text-primary font-technical text-4xl font-bold leading-none mb-0.5">
               {deductionProbability}%
             </div>
@@ -284,8 +284,7 @@ export default function InvestigationMap({
           </div>
 
           <div 
-            className="tactile-paper p-6 flex flex-col transform -rotate-1 hover:rotate-0 transition-transform duration-500 shadow-2xl relative floating-node"
-            style={{ animationDelay: "-4s" }}
+            className="tactile-paper p-6 flex flex-col relative"
           >
             <div className="absolute top-0.5 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-30">
               <div className="w-3.5 h-3.5 bg-red-800 rounded-full shadow-inner border border-red-950 relative flex items-center justify-center">
@@ -343,8 +342,7 @@ export default function InvestigationMap({
           </div>
 
           <div 
-            className="tactile-paper p-5 border border-outline-variant transform rotate-1 hover:rotate-0 transition-transform duration-500 shadow-xl relative floating-node"
-            style={{ animationDelay: "-6s" }}
+            className="tactile-paper p-5 border border-outline-variant relative"
           >
             <div className="font-label-caps text-primary border-b border-outline-variant/40 mb-2 pb-1 text-[10px] tracking-widest uppercase">
               COORDINATES WEB

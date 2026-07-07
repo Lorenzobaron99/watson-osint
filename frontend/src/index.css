@@ -43,10 +43,8 @@
 }
 
 .tactile-paper {
-  background-image: url("https://www.transparenttextures.com/patterns/natural-paper.png");
   background-color: #24221f;
   border: 1px solid #4e463a;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -1px rgba(0, 0, 0, 0.3), inset 0 0 40px rgba(0,0,0,0.2);
 }
 
 /* ── Impeccable chat bubbles — high contrast, no texture fatigue ── */
@@ -71,53 +69,30 @@
 }
 
 .tactile-paper-light {
-  background-image: url("https://www.transparenttextures.com/patterns/natural-paper.png");
-  background-color: #dfd8cb;
+  background-color: #2a2824;
   border: 1px solid #9a8f81;
   color: #1c1b1b;
-  box-shadow: 0 4px 10px -2px rgba(0, 0, 0, 0.6), inset 0 0 30px rgba(0,0,0,0.1);
 }
 
 .red-string {
   stroke: #881e1c;
   stroke-width: 2;
-  filter: drop-shadow(0px 2px 4px rgba(136, 30, 28, 0.7));
   stroke-dasharray: 1000;
   stroke-dashoffset: 1000;
-  animation: drawString 2s ease-out forwards, pulseString 4s ease-in-out infinite;
+  animation: drawString 2s ease-out forwards;
 }
 
 @keyframes drawString {
   to { stroke-dashoffset: 0; }
 }
 
-@keyframes pulseString {
-  0%, 100% { opacity: 0.7; stroke-width: 2; }
-  50% { opacity: 1; stroke-width: 2.5; }
-}
-
-.floating-node {
-  animation: drift 12s ease-in-out infinite alternate;
-}
-
-@keyframes drift {
-  from { transform: translate(0, 0); }
-  to { transform: translate(6px, 10px); }
-}
+.floating-node {}
 
 .mahogany-border {
   border: 1px solid #4a2c2a;
-  box-shadow: inset 0 0 10px rgba(0,0,0,0.5);
 }
 
-.flicker {
-  animation: flickerGlow 2s infinite alternate;
-}
-
-@keyframes flickerGlow {
-  0%, 100% { opacity: 0.8; }
-  50% { opacity: 1; filter: drop-shadow(0 0 8px #e6c184); }
-}
+.flicker {}
 
 /* Material design symbol fallback styling */
 .v-icon {
