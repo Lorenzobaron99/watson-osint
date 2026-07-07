@@ -1,29 +1,31 @@
 # 🕵️ Watson — The OSINT Investigation Engine
 
 <p align="center">
-  <img src="watson/web/static/assets/watson-logo-Dk9tawHb.png" alt="Watson" width="120">
+  <img src="watson/web/static/assets/holmes-watch.jpg" alt="Holmes pulled out his watch — Sidney Paget, 1893" width="480" style="border-radius: 8px;">
 </p>
 
 <p align="center">
-  <strong>Stop searching. Start investigating.</strong>
+  <strong>Open source intelligence for an age of noise.</strong><br>
+  <em>Stop searching. Start investigating.</em>
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/osintengine/"><img src="https://img.shields.io/badge/pypi-v1.0.7-blue" alt="PyPI"></a>
+  <a href="https://pypi.org/project/osintengine/"><img src="https://img.shields.io/badge/pypi-v1.0.8-blue" alt="PyPI"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-green" alt="License"></a>
   <a href="https://github.com/Lorenzobaron99/watson-osint"><img src="https://img.shields.io/badge/status-active-brightgreen" alt="Status"></a>
+  <a href="http://localhost:8777"><img src="https://img.shields.io/badge/website-localhost%3A8777-amber" alt="Website"></a>
 </p>
 
 ---
 
-**Watson doesn't just look things up. It investigates.**
-
-Most tools give you a search bar. Watson gives you a forensics lab. It runs a 7-phase intelligence pipeline across 16+ data sources, cross-references every finding, builds a persistent knowledge graph that remembers across cases, and produces a structured intelligence brief — not a list of links.
-
-One target. One command. A dossier that would take an analyst hours.
-
-> **Why I built this.** OSINT tools fall into two camps: shallow search engines that return links, and expensive enterprise platforms locked behind sales calls. There's no open, production-grade investigation engine that chains 16+ data sources, cross-references findings, remembers across cases, and produces real intelligence briefs — not just lists of URLs. Watson fills that gap. It's free, open-source, model-agnostic, and runs on your machine. No cloud dependency. No vendor lock-in. Just answers.
+> **Why Watson exists.** AI-generated content now surpasses human output. Search engines return noise dressed as answers. The public is drowning in plausible-sounding falsehoods while truth sits buried under sponsored links and SEO spam. OSINT analysts spend hours assembling fragments from a dozen tools — crt.sh for certs, OpenSanctions for entities, Wayback for history, DuckDuckGo for surface — then manually cross-reference everything into a spreadsheet.
+>
+> There is no open, production-grade investigation engine. Enterprise platforms exist, but they're locked behind six-figure contracts and sales calls. The rest of the world gets browser bookmarks and Google dorks.
+>
+> **Watson is the open-source Palantir for the people.** A 7-phase autonomous pipeline across 16+ data sources. Every finding verified, cross-referenced, and scored. A persistent knowledge graph that remembers across cases. One command. No cloud dependency. No vendor lock-in. No one between you and the truth.
+>
+> Model-agnostic. Free. Runs on your machine.
 
 ---
 

@@ -49,6 +49,27 @@
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -1px rgba(0, 0, 0, 0.3), inset 0 0 40px rgba(0,0,0,0.2);
 }
 
+/* ── Impeccable chat bubbles — high contrast, no texture fatigue ── */
+.chat-bubble-watson {
+  background: #20201f;
+  border: 1px solid #3a342c;
+  color: #e5e2e1;
+}
+
+.chat-bubble-user {
+  background: #2a2a25;
+  border: 1px solid #4e463a;
+  color: #e5e2e1;
+}
+
+.chat-text-primary {
+  color: #f0ece8;
+}
+
+.chat-text-secondary {
+  color: #c4bbb0;
+}
+
 .tactile-paper-light {
   background-image: url("https://www.transparenttextures.com/patterns/natural-paper.png");
   background-color: #dfd8cb;

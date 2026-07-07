@@ -586,14 +586,14 @@ export default function WatsonChat({
                 </div>
 
                 <div className="space-y-2 flex-1">
-                  <div className={`flex items-center gap-1.5 text-[9px] font-technical tracking-wider text-on-surface-variant/50 ${!isWatson && "justify-end"}`}>
+                  <div className={`flex items-center gap-1.5 text-[10px] font-technical tracking-wider text-on-surface-variant/70 ${!isWatson && "justify-end"}`}>
                     <span>{isWatson ? "WATSON" : "DETECTIVE"}</span>
                     <span>•</span>
                     <span>{msg.timestamp}</span>
                   </div>
 
-                  <div className={`tactile-paper p-4 rounded text-xs leading-relaxed space-y-3 relative shadow-md ${
-                    isWatson ? "bg-surface-container-high border-outline-variant text-on-surface" : "bg-surface-container border-primary/20 text-on-surface"
+                  <div className={`p-4 rounded-lg space-y-3 relative ${
+                    isWatson ? "chat-bubble-watson" : "chat-bubble-user"
                   }`}>
                     {isWatson && (
                       <div className="absolute top-1 left-2">
@@ -616,7 +616,7 @@ export default function WatsonChat({
                     )}
 
                     {/* Message text */}
-                    <div className="whitespace-pre-wrap font-body-sm text-[12px] leading-relaxed">
+                    <div className="whitespace-pre-wrap font-body-sm text-[13px] leading-relaxed chat-text-primary">
                       {msg.text}
                     </div>
 
@@ -637,8 +637,8 @@ export default function WatsonChat({
                                 <span className="text-[9px] text-primary bg-primary/10 px-1 rounded">{f.source_type}</span>
                               )}
                             </div>
-                            <div className="text-[11px] font-bold text-on-surface">{f.title}</div>
-                            <div className="text-[10px] text-on-surface-variant line-clamp-2">{f.description}</div>
+                            <div className="text-[12px] font-bold chat-text-primary">{f.title}</div>
+                            <div className="text-[11px] chat-text-secondary line-clamp-2">{f.description}</div>
                             {f.source_url && (
                               <a href={f.source_url} target="_blank" rel="noopener noreferrer" className="text-[9px] text-primary hover:underline mt-1 inline-block break-all">
                                 {f.source_url}
@@ -710,9 +710,9 @@ export default function WatsonChat({
                   Watson is investigating...
                 </div>
                 {progressLog.length > 0 && (
-                  <div className="bg-surface-container-high border border-outline-variant/60 rounded p-3 max-h-32 overflow-y-auto">
+                  <div className="bg-surface-container-high border border-outline-variant/60 rounded p-3 max-h-32 overflow-y-auto chat-text-secondary">
                     {progressLog.slice(-8).map((line, i) => (
-                      <div key={i} className="font-mono text-[10px] text-on-surface-variant leading-relaxed">
+                      <div key={i} className="font-mono text-[11px] leading-relaxed">
                         {line.startsWith("──") ? <span className="text-primary font-bold">{line}</span> : line}
                       </div>
                     ))}
