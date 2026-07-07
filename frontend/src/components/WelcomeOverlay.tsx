@@ -106,7 +106,7 @@ export default function WelcomeOverlay({ onComplete, onOpenSettings }: WelcomeOv
             <h2 className="font-headline-md text-primary text-xl font-bold mb-2">
               {current.title}
             </h2>
-            <p className="font-body-sm text-sm text-on-surface-variant leading-relaxed">
+            <p className="font-body-sm text-sm chat-text-secondary leading-relaxed">
               {current.body}
             </p>
           </div>

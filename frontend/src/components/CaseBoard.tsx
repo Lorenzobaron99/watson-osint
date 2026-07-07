@@ -147,7 +147,7 @@ export default function CaseBoard({
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-outline-variant/40 pb-4 gap-4">
         <div>
           <h1 className="font-headline-md text-primary text-2xl lg:text-3xl leading-none">Evidence Pinboard</h1>
-          <p className="font-body-sm text-xs text-on-surface-variant italic mt-1">"Pin clues, trace threads, and draw connections."</p>
+          <p className="font-body-sm text-xs chat-text-secondary italic mt-1">"Pin clues, trace threads, and draw connections."</p>
         </div>
         
         {/* Actions Row */}
@@ -244,7 +244,7 @@ export default function CaseBoard({
           <div className="col-span-full py-12 text-center bg-surface-container-low/30 border border-dashed border-outline-variant rounded p-6">
             <FileText size={32} className="mx-auto text-on-surface-variant/35 mb-2" />
             <p className="font-headline-md text-lg text-primary">No clues in ledger category.</p>
-            <p className="font-body-sm text-xs text-on-surface-variant italic mt-1">Pin new coordinates or execute digital scans to gather evidence.</p>
+            <p className="font-body-sm text-xs chat-text-secondary italic mt-1">Pin new coordinates or execute digital scans to gather evidence.</p>
           </div>
         ) : (
           filteredClues.map((clue) => {
@@ -279,7 +279,7 @@ export default function CaseBoard({
                     </span>
                   </div>
 
-                  <p className="font-body-sm text-xs text-on-surface-variant leading-relaxed line-clamp-4">
+                  <p className="font-body-sm text-xs chat-text-secondary leading-relaxed line-clamp-4">
                     {clue.description}
                   </p>
 

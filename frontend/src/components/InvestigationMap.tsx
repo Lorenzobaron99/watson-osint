@@ -115,7 +115,7 @@ export default function InvestigationMap({
 
       {/* ── Entity Graph ── */}
       {hasGraph ? (
-        <div className="bg-surface-container/60 backdrop-blur border border-outline-variant/60 rounded overflow-hidden">
+        <div className="bg-surface-container border border-outline-variant/60 rounded overflow-hidden">
           <div className="px-4 py-2 border-b border-outline-variant/40 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className="font-technical text-xs text-primary uppercase tracking-wider">
@@ -152,7 +152,7 @@ export default function InvestigationMap({
         </div>
       ) : (
         /* Empty state */
-        <div className="bg-surface-container/60 backdrop-blur border border-outline-variant/60 rounded overflow-hidden">
+        <div className="bg-surface-container border border-outline-variant/60 rounded overflow-hidden">
           <div className="px-4 py-2 border-b border-outline-variant/40 flex items-center justify-between">
             <span className="font-technical text-xs text-primary uppercase tracking-wider">
               Entity Graph
@@ -242,8 +242,8 @@ export default function InvestigationMap({
                 >
                   <div className={`w-3.5 h-3.5 rounded-full relative flex items-center justify-center transition-all ${
                     isSelected 
-                      ? "bg-red-600 ring-4 ring-red-800/60 scale-125 shadow-[0_0_12px_#ef4444]" 
-                      : "bg-primary hover:bg-red-500 ring-2 ring-primary/30 group-hover:scale-110 shadow-md"
+                      ? "bg-red-600 ring-2 ring-red-800/40 scale-110 shadow-md" 
+                      : "bg-primary hover:bg-red-500 ring-1 ring-primary/20 group-hover:scale-110"
                   }`}>
                     <div className="w-1 h-1 bg-white rounded-full opacity-70 absolute top-0.5 left-0.5" />
                   </div>
@@ -268,7 +268,7 @@ export default function InvestigationMap({
 
         {/* Right Column */}
         <div className="xl:col-span-4 space-y-6">
-          <div className="bg-surface-container/60 backdrop-blur border border-outline-variant/60 p-4 rounded flex flex-col items-center justify-center text-center shadow-lg relative floating-node" style={{ animationDelay: "-2s" }}>
+          <div className="bg-surface-container/60 border border-outline-variant/60 p-4 rounded flex flex-col items-center justify-center text-center shadow-lg relative floating-node" style={{ animationDelay: "-2s" }}>
             <div className="text-primary font-technical text-4xl font-bold leading-none mb-0.5">
               {deductionProbability}%
             </div>
@@ -318,7 +318,7 @@ export default function InvestigationMap({
                 <span className="font-technical text-[9px] text-on-surface-variant/60 uppercase">Forensic Material Logged</span>
               </div>
             )}
-            <div className="space-y-3 font-body-sm text-xs text-on-surface-variant flex-1 leading-relaxed">
+            <div className="space-y-3 font-body-sm text-xs chat-text-secondary flex-1 leading-relaxed">
               <p className="border-b border-outline-variant/30 pb-1.5">
                 <span className="font-bold text-primary">Exhibit Reference:</span> {selectedClue?.exhibitCode || "EX-NONE"}
               </p>

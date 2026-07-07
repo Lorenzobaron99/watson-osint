@@ -572,7 +572,7 @@ export default function WatsonChat({
         </span>
       </div>
 
-      <div className="flex-1 flex flex-col border border-outline-variant rounded bg-surface-container/40 overflow-hidden shadow-2xl h-[55vh] min-h-[400px]">
+      <div className="flex-1 flex flex-col border border-outline-variant rounded bg-surface-container/40 overflow-hidden shadow-lg h-[55vh] min-h-[400px]">
         {/* Chat Stream */}
         <div className="flex-1 overflow-y-auto p-5 space-y-6 select-text" ref={chatContainerRef} onScroll={handleChatScroll}>
           {messages.map((msg) => {
