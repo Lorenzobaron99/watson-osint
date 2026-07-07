@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Any
 
 # Try to import Finding from wherever it lives
 try:
@@ -58,6 +59,8 @@ FINDINGS:
 
 {resolved_entities}
 
+{intelligence}
+
 {cross_platform_correlation}
 
 Produce STRICT JSON (no markdown fences) with this shape:
@@ -94,6 +97,10 @@ Rules:
   NEVER invent dates — if a finding says "sentenced in 2023", use "2023", not a guess.
 - Be specific: name the regulator, the amount, the year when the finding states it.
 - If findings are thin, say so in executive_summary and keep themes minimal.
+- CRITICAL: IGNORE findings about unrelated people, organizations, or topics. If a
+  finding is about "Lynn Packer", "Mohammad Faisal", "Russian Army", or any person/org
+  that has nothing to do with the target, discard it completely. Only synthesize
+  findings that are DIRECTLY about the target or the target's industry/domain.
 - CRITICAL for recommended_next_steps: do NOT suggest steps that were ALREADY
   executed. The tools listed below already ran — recommending them again is wrong.
   Only suggest genuinely new follow-up vectors that haven't been tried.
@@ -208,6 +215,164 @@ def _format_resolved_entities(resolved: list | None) -> str:
     return "\n".join(lines)
 
 
+def _filter_relevant_findings(
+    findings: list,
+    query: str,
+    target_type: str = "",
+    min_score: int = 25,
+    min_keep: int = 5,
+) -> list:
+    """Score each finding against the target query and discard noise.
+    
+    Returns only findings likely relevant to the investigation target.
+    Prevents the LLM from drowning in unrelated web-search noise 
+    (Obama tan suits, Big Tigger lawsuits, Audi forum posts, etc.).
+    
+    Scoring is deterministic — no LLM calls.
+    """
+    import re as _re
+    
+    query_lower = query.lower().strip()
+    query_terms = set(query_lower.split())
+    # Also extract the main target domain/name for matching
+    query_words = [w for w in query_lower.split() if len(w) > 2]
+    
+    # Source-type relevance boost by target type
+    _SOURCE_RELEVANCE = {
+        "organization": {"wikidata": 5, "corporate-finance": 5, "websites-domains": 4,
+                         "dns": 5, "crtsh": 5, "sanctions": 4, "scraper": 3},
+        "person": {"people-search": 5, "social-media": 4, "wikidata": 4, "sanctions": 5,
+                   "criminal-legal": 5, "scraper": 3},
+        "domain": {"websites-domains": 5, "dns": 5, "crtsh": 5, "scraper": 3},
+    }
+    
+    # Noise patterns: these are almost certainly irrelevant for any target
+    _NOISE_PATTERNS = [
+        r'\bdictionary\s+definition\b', r'\bforum\s+post\b', r'\binstagram\s+likes?\b',
+        r'\btan\s+suit\b', r'\bcontroversy\b(?!.*(?:fraud|sanction|investigation))',
+        r'\bdefamation\s+lawsuit\b', r'\bbreaks?\s+silence\b',
+        r'\b7\s*nation\s*army\b', r'\bwhite\s+stripes?\b(?!.*(?:com\b|\.com))',
+        r'\bservice\s+due\b', r'\bremove.*(?:warning|stripe)\b',
+        r'\btechnical\s+(?:forecast|analysis)\b', r'\bforex\b',
+        r'\bfree\s+instagram\b', r'\bhow\s+to\s+(?:get|remove|fix)\b',
+        r'\btiktok\b', r'\byoutube\s+(?:summarizer|cover|music)\b',
+    ]
+    
+    # Scoring per finding
+    def _score(f) -> int:
+        title = (getattr(f, "title", "") or "").lower()
+        desc = (getattr(f, "description", "") or "").lower()
+        url = (getattr(f, "source_url", "") or "").lower()
+        source_type = (getattr(f, "source_type", "") or "").lower()
+        source_tier = (getattr(f, "source_tier", "") or "").upper()
+        confidence = getattr(f, "confidence", 0.5) or 0.5
+        combined = f"{title} {desc}"
+        
+        score = 0
+        
+        # ── Strong positive signals ──
+        # Target name appears in title
+        if any(term in title for term in query_terms if len(term) > 3):
+            score += 50
+        elif any(term in title for term in query_terms):
+            score += 40
+        
+        # Target terms appear in description
+        desc_term_matches = sum(1 for t in query_terms if len(t) > 3 and t in desc)
+        score += desc_term_matches * 15
+        
+        # Source URL contains target domain
+        target_domain = None
+        for term in query_terms:
+            if '.' in term:
+                target_domain = term
+                break
+        if target_domain and target_domain in url:
+            score += 60
+        
+        # Source type relevance boost
+        st_relevance = _SOURCE_RELEVANCE.get(target_type, {})
+        score += st_relevance.get(source_type, 0) * 5
+        
+        # Source tier: PRIMARY findings are inherently relevant
+        if source_tier == "PRIMARY":
+            score += 15
+        elif source_tier == "TERTIARY":
+            score -= 10
+        
+        # Confidence: high-confidence findings more likely relevant
+        if confidence >= 0.85:
+            score += 10
+        
+        # ── Entity matching ──
+        for ent in getattr(f, "entities", []) or []:
+            ent_val = (ent.get("value", "") or ent.get("name", "") or str(ent)).lower()
+            if any(term in ent_val for term in query_words if len(term) > 2):
+                score += 25
+                break
+        
+        # ── Negative signals (noise detection) ──
+        # Check noise patterns
+        for pattern in _NOISE_PATTERNS:
+            if _re.search(pattern, combined):
+                score -= 30
+                break
+        
+        # Title contains clearly unrelated capitalized proper names
+        # (e.g., "Lynn Packer", "Mohammad Faisal", "Russian Army")
+        # that don't overlap with the target query
+        proper_names = _re.findall(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\b', 
+                                   getattr(f, "title", "") or "")
+        for name in proper_names:
+            name_lower = name.lower()
+            name_parts = set(name_lower.split())
+            if not (name_parts & query_terms):
+                # This proper name doesn't overlap with target at all
+                # If description ALSO has zero target mentions, it's almost certainly noise
+                desc_has_target = any(t in desc for t in query_terms if len(t) > 3)
+                if not desc_has_target:
+                    score -= 40  # Double penalty: unrelated name + no target in body
+                else:
+                    score -= 20
+                break  # One strong signal of unrelated content is enough
+        
+        # Description reads like a search result page, not substantive content
+        search_page_signals = ["search results for", "searching corporate records",
+                               "results for '", "browse users and their profiles"]
+        if any(sig in desc for sig in search_page_signals):
+            score -= 15
+        
+        # ── Cap and return ──
+        return max(-50, min(100, score))
+    
+    # Score all findings
+    scored = [(_score(f), i, f) for i, f in enumerate(findings)]
+    
+    # Stats for logging
+    high = sum(1 for s, _, _ in scored if s >= 50)
+    medium = sum(1 for s, _, _ in scored if 25 <= s < 50)
+    low = sum(1 for s, _, _ in scored if s < 25)
+    logger.info(
+        "relevance_filter: %d findings → %d high, %d medium, %d noise (query=%s)",
+        len(findings), high, medium, low, query[:60]
+    )
+    
+    # Keep findings scoring >= min_score
+    relevant = [f for s, _, f in scored if s >= min_score]
+    
+    # Safety net: if we filtered TOO aggressively (e.g., all findings are
+    # low-confidence web searches), keep at least min_keep findings by score
+    if len(relevant) < min_keep:
+        scored.sort(key=lambda x: x[0], reverse=True)
+        relevant = [f for _, _, f in scored[:max(min_keep, len(scored) // 2)]]
+        logger.info(
+            "relevance_filter: safety net — keeping %d/%d findings (min_keep=%d)",
+            len(relevant), len(findings), min_keep
+        )
+    
+    return relevant
+
+
 def _findings_block(findings, max_chars: int = 6000) -> str:
     """Build a condensed findings block for the synthesis prompt. 
     Caps at max_chars and prioritizes findings with source URLs."""
@@ -225,7 +390,14 @@ def _findings_block(findings, max_chars: int = 6000) -> str:
         title = getattr(f, "title", str(f)[:100]) or ""
         desc = getattr(f, "description", "") or ""
         desc = desc.replace("\n", " ").replace("**Extracted text", "").lstrip("(")
-        chunk = f"[{i}] {title}\n    {desc[:400]}\n"
+        conf = getattr(f, "confidence", 0.5) or 0.5
+        tier = getattr(f, "tier", None)
+        # tier is a property computed from confidence — call it
+        try:
+            tier_str = str(tier) if tier else ("CONFIRMED" if conf >= 0.85 else "PROBABLE" if conf >= 0.70 else "POSSIBLE" if conf >= 0.40 else "UNLIKELY" if conf >= 0.10 else "UNSUBSTANTIATED")
+        except Exception:
+            tier_str = "UNKNOWN"
+        chunk = f"[{i}] [{tier_str} | {conf:.0%}] {title}\n    {desc[:400]}\n"
         if total + len(chunk) > max_chars:
             break
         lines.append(chunk)
@@ -383,6 +555,7 @@ async def synthesize_brief(
     investigation_mode: str = "",
     graph_context: dict | None = None,
     correlation: dict | None = None,
+    intelligence: Any = None,
 ) -> dict | None:
     """Produce a structured intelligence brief from findings. Returns dict or None."""
     # Filter out pure fetch-failures
@@ -428,6 +601,22 @@ async def synthesize_brief(
     
     # Non-person targets: LLM synthesis
 
+    # ── Overlay intelligence layer confidence scores onto findings ──
+    # This replaces LLM-assigned "vibes" confidence (0.55, 0.85, etc.) with
+    # evidence-based scores from source tiering + corroboration.
+    if intelligence is not None:
+        usable = _apply_intelligence_scores(usable, intelligence)
+
+    # ── Filter irrelevant findings BEFORE the LLM sees them ──
+    # Without this, the LLM drowns in web-search noise (Obama tan suits,
+    # Big Tigger lawsuits, Audi forum posts, dictionary definitions, etc.)
+    # and concludes "no information related to X" even when real findings exist.
+    usable_filtered = _filter_relevant_findings(usable, query, target_type, min_score=35)
+    if usable_filtered:
+        usable = usable_filtered
+    else:
+        logger.warning("synthesis: relevance filter removed all findings — using unfiltered")
+
     target_guidance = _TARGET_GUIDANCE.get(target_type, "") if target_type else ""
     
     # Deep investigation on persons: use criminal/legal guidance, not generic identity
@@ -441,6 +630,7 @@ async def synthesize_brief(
         target_specific_guidance=target_guidance,
         findings=_findings_block(usable),
         resolved_entities=_format_resolved_entities(resolved_entities),
+        intelligence=_format_intelligence(intelligence),
         cross_platform_correlation=_format_correlation(correlation),
         executed_tools=_format_executed_tools(executed_tools),
     )
@@ -470,6 +660,13 @@ async def synthesize_brief(
         return _fallback_brief(query, usable)
 
     brief["_synthesized"] = True
+
+    # ── Post-process: inject intelligence layer output ──
+    # The LLM may have ignored evidence-based confidence, adversarial signals,
+    # and entity relationships. Force them into the brief now.
+    if intelligence is not None:
+        brief = _enrich_brief_with_intelligence(brief, intelligence)
+
     return brief
 
 
@@ -680,6 +877,131 @@ def _fallback_brief(query: str, findings: list) -> dict:
         "_synthesized": False,
         "_sources": sources[:15],
     }
+
+
+def _apply_intelligence_scores(findings: list, intelligence) -> list:
+    """Overlay evidence-based confidence scores from the intelligence layer
+    onto findings. Returns the same list (mutated in place), with each finding's
+    .confidence and .tier replaced by the intelligence engine's output.
+
+    Findings without a matching intelligence score are left unchanged.
+    """
+    if intelligence is None:
+        return findings
+    scores = getattr(intelligence, 'confidence_scores', {}) or {}
+    if not scores:
+        return findings
+
+    overlaid = 0
+    for f in findings:
+        fid = getattr(f, "id", None) or str(f)
+        ev = scores.get(fid)
+        if ev is None:
+            # Try matching by title prefix
+            title = getattr(f, "title", "") or ""
+            for key, val in scores.items():
+                if key[:20] in title or title[:20] in key:
+                    ev = val
+                    break
+        if ev is not None:
+            f.confidence = ev.score
+            # tier is a computed property from confidence — no need to set it
+            overlaid += 1
+
+    if overlaid:
+        logger.debug("intelligence_scores_overlaid: %d/%d findings", overlaid, len(findings))
+    return findings
+
+
+def _enrich_brief_with_intelligence(brief: dict, intelligence) -> dict:
+    """Post-process the LLM brief to inject intelligence layer output that the
+    LLM may have ignored: adversarial signals → risk themes, relationships →
+    entity context, entity corroboration → confidence annotations."""
+    if intelligence is None:
+        return brief
+
+    # ── Adversarial signals → risk themes ──
+    signals = getattr(intelligence, 'adversarial_signals', []) or []
+    detected = [s for s in signals if s.get("detected")]
+    if detected:
+        existing_risks = brief.get("risk_themes") or []
+        for s in detected:
+            risk = f"OPSEC: {s.get('signal', 'unknown')} — {s.get('detail', '')}"
+            if risk not in existing_risks:
+                existing_risks.append(risk)
+        if existing_risks:
+            brief["risk_themes"] = existing_risks
+
+    # ── Entity relationships → notable entities ──
+    rels = getattr(intelligence, 'relationships', []) or []
+    if rels:
+        entities = brief.get("notable_entities") or []
+        for r in rels[:10]:
+            entities.append({
+                "name": f"{r.source} → {r.target}",
+                "role": r.relationship,
+                "context": f"{r.evidence_summary} (confidence: {r.confidence:.0%})"
+            })
+        if entities:
+            brief["notable_entities"] = entities
+
+    # ── Entity corroboration → entity confidence annotation ──
+    corroboration = getattr(intelligence, 'entity_corroboration', {}) or {}
+    if corroboration:
+        entities = brief.get("notable_entities") or []
+        for ent in entities:
+            name = ent.get("name", "")
+            if name in corroboration:
+                count = corroboration[name]
+                ent["context"] = (ent.get("context", "") + f" [corroborated by {count} sources]").strip()
+        if entities:
+            brief["notable_entities"] = entities
+
+    return brief
+
+
+def _format_intelligence(intel) -> str:
+    """Format structured intelligence for the synthesis prompt."""
+    if intel is None:
+        return ""
+    
+    lines = ["STRUCTURED INTELLIGENCE (evidence-based, not LLM-generated):"]
+    
+    # Confidence summary
+    if hasattr(intel, 'confidence_scores') and intel.confidence_scores:
+        scores = intel.confidence_scores
+        confirmed = sum(1 for c in scores.values() if c.tier == "CONFIRMED")
+        probable = sum(1 for c in scores.values() if c.tier == "PROBABLE")
+        score_vals = [c.score for c in scores.values()]
+        avg = sum(score_vals) / len(score_vals) if score_vals else 0
+        lines.append(f"\nCONFIDENCE: {len(scores)} findings, {confirmed} CONFIRMED, "
+                     f"{probable} PROBABLE, avg {avg:.0%}")
+        lines.append("(Based on source credibility + corroboration, not LLM estimate)")
+    
+    # Entity relationships
+    if hasattr(intel, 'relationships') and intel.relationships:
+        lines.append(f"\nENTITY RELATIONSHIPS ({len(intel.relationships)}):")
+        for r in intel.relationships[:15]:
+            lines.append(
+                f"  • {r.source} [{r.source_type}] —{r.relationship}→ "
+                f"{r.target} [{r.target_type}] "
+                f"(conf: {r.confidence:.0%})"
+            )
+    
+    # Timeline
+    if hasattr(intel, 'timeline') and intel.timeline:
+        lines.append(f"\nEXTRACTED TIMELINE ({len(intel.timeline)} events):")
+        for t in intel.timeline[:15]:
+            lines.append(f"  • {t.date} [{t.category}] {t.event[:100]}")
+    
+    # Adversarial signals
+    if hasattr(intel, 'adversarial_signals') and intel.adversarial_signals:
+        lines.append("\nOPSEC / ADVERSARIAL SIGNALS:")
+        for s in intel.adversarial_signals:
+            detected = "DETECTED" if s.get("detected") else "None"
+            lines.append(f"  • {s.get('signal', '?')}: {detected} — {s.get('detail', '')}")
+    
+    return "\n".join(lines)
 
 
 def _format_correlation(correlation: dict | None) -> str:

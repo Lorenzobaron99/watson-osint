@@ -11,6 +11,7 @@ interface SidebarProps {
 export default function Sidebar({ currentTab, setCurrentTab, deductionProbability, onOpenSettings }: SidebarProps) {
   const [vaultOpen, setVaultOpen] = useState(false);
   const [typedTitle, setTypedTitle] = useState("");
+  const [activeModel, setActiveModel] = useState("");
   const caseTitle = "Autonomous OSINT Investigation";
 
   useEffect(() => {
@@ -25,6 +26,19 @@ export default function Sidebar({ currentTab, setCurrentTab, deductionProbabilit
       }
     }, 40);
     return () => clearInterval(interval);
+  }, []);
+
+  // Fetch active LLM model from backend
+  useEffect(() => {
+    fetch("/api/settings/llm")
+      .then(r => r.json())
+      .then(data => {
+        if (data.model) {
+          const provider = data.provider || "?";
+          setActiveModel(`${provider}/${data.model}`);
+        }
+      })
+      .catch(() => {});
   }, []);
 
   const navItems = [
@@ -43,6 +57,12 @@ export default function Sidebar({ currentTab, setCurrentTab, deductionProbabilit
           {typedTitle}
           <span className="animate-pulse ml-0.5 font-bold text-primary">|</span>
         </div>
+        {activeModel && (
+          <div className="mt-2 flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="text-[9px] font-technical text-emerald-400/70 uppercase tracking-wider">{activeModel}</span>
+          </div>
+        )}
       </div>
 
       <nav className="flex-1 space-y-1.5 overflow-y-auto pr-1">

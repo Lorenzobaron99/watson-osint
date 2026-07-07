@@ -297,6 +297,7 @@ class InvestigationReport:
     phases_completed: list[str] = field(default_factory=list)
     verifiability_score: float = 0.0
     graph_context: dict = field(default_factory=dict)  # Known entities from community graph pre-check
+    intelligence: Any = None  # IntelligenceProduct from watson.intelligence
     stix_bundle: dict | None = None  # STIX 2.1 bundle from serialization phase
     stix_path: str | None = None  # Path to saved STIX JSON file
 
@@ -1005,11 +1006,15 @@ class OrchestrationEngine:
             target_types=None,  # ALL target types eligible post-deep
         )
         if post_deep_graph:
-            report.findings.extend(post_deep_graph)
-            sse.progress(
-                "deep",
-                f"→ Post-deep graph enrichment: {len(post_deep_graph)} new discoveries from accumulated findings",
-            )
+            try:
+                report.findings.extend(post_deep_graph)
+                sse.progress(
+                    "deep",
+                    f"→ Post-deep graph enrichment: {len(post_deep_graph)} new discoveries from accumulated findings",
+                )
+            except Exception as e:
+                logger.error("post_deep_graph_extend_failed: %s", e, exc_info=True)
+                raise
 
         # Phase 5: Dark web (deep_investigation only)
         # NOTE: person_skip_dark defined for the elif chain below
@@ -1039,12 +1044,30 @@ class OrchestrationEngine:
         correlation = None
         if profile.target_type in ("person", "email") and report.findings:
             sse.progress("correlate", "Cross-platform identity correlation…")
-            correlation = self._correlate_identity(report.findings, query, sse)
+            try:
+                correlation = self._correlate_identity(report.findings, query, sse)
+            except Exception as e:
+                logger.error("correlate_identity_failed: %s", e, exc_info=True)
+                correlation = None
+
+        # Phase 5.75: Intelligence Production — evidence-based analysis
+        if report.findings:
+            sse.progress("intelligence", "Producing intelligence — scoring, linking, timeline…")
+            try:
+                intel = self._phase_intelligence(report.findings, profile.target_type)
+                report.intelligence = intel
+                sse.progress("intelligence",
+                    f"→ {len(intel.relationships)} relationships, "
+                    f"{len(intel.timeline)} timeline events, "
+                    f"{len(intel.adversarial_signals)} opsec signals")
+            except Exception as e:
+                logger.error("intelligence_phase_failed: %s", e, exc_info=True)
+                report.intelligence = None
 
         # Phase 6: Analyze — cross-reference + entity resolution + synthesis
         if "analyze" not in self._skip_phases:
             sse.progress("analyze", "Cross-referencing, resolving entities, synthesizing…")
-            brief = await self._phase_analyze(query, focus, report.findings, sse, report.target_type, report.graph_context, correlation)
+            brief = await self._phase_analyze(query, focus, report.findings, sse, report.target_type, report.graph_context, correlation, report.intelligence)
             report.brief = brief or {}
         else:
             sse.progress("analyze", "⏭ Skipping analysis (user requested)")
@@ -3703,13 +3726,27 @@ Examples:
             ) if matches else None,
         }
 
+    # ── Phase 5.75: Intelligence Production ────────────────────
+
+    @staticmethod
+    def _phase_intelligence(findings: list, target_type: str = ""):
+        """Produce structured intelligence from raw findings.
+
+        Zero network calls — operates on already-collected data.
+        Produces evidence-based confidence, entity relationships,
+        temporal timeline, and adversarial signals.
+        """
+        from src.watson.intelligence import produce_intelligence
+        return produce_intelligence(findings, target_type)
+
     # ── Phase 6: Analyze ──────────────────────────────────────
 
     async def _phase_analyze(self, query: str, focus: str,
                               findings: list[Finding], sse: SSEEmitter,
                               target_type: str = "",
                               graph_context: dict | None = None,
-                              correlation: dict | None = None) -> dict | None:
+                              correlation: dict | None = None,
+                              intelligence: Any = None) -> dict | None:
         """Cross-reference, entity resolution, LLM synthesis."""
         if not findings:
             return None
@@ -3760,6 +3797,7 @@ Examples:
                 investigation_mode=getattr(self, '_investigation_mode', ''),
                 graph_context=graph_context or {},
                 correlation=correlation,
+                intelligence=intelligence,
             )
             if brief and sse._on_event:
                 sse.emit("brief", brief)
@@ -5585,6 +5623,17 @@ and confidence assessments. Follow the OUTPUT FORMAT specified above."""
         valid_types = {"person", "company", "organization", "domain", "email", 
                        "wallet", "ip", "location", "phone", "url"}
         hint = (hint_type or "").strip().lower()
+        if hint == "person":
+            # ══════ spaCy quality gate: validate LLM person hints ══════
+            try:
+                from .ner import _spacy_validate_person, _is_garbage_person
+                if _is_garbage_person(v):
+                    return "organization"  # LLM hallucinated a person — downgrade
+                if _spacy_validate_person(v):
+                    return "person"
+                return "organization"  # spaCy disagrees — downgrade
+            except ImportError:
+                return "person"  # ner not available, trust the LLM
         if hint in valid_types:
             return hint
         # Heuristic: short strings with spaces are likely person names

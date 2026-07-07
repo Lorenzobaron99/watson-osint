@@ -130,6 +130,30 @@ def _is_garbage_person(name: str) -> bool:
     # Headline fragments: 4+ words is almost certainly a sentence fragment
     if len(tokens) > 3:
         return True
+    
+    # ── Known non-person patterns ──
+    # "The X" constructions (The American Revolution, The Time, The Missing Alibi)
+    if lower_tokens[0] == "the" and len(tokens) >= 3:
+        return True
+    # "X of Y" / "X and Y" patterns (almost never a person name)
+    if "of" in lower_tokens or "and" in lower_tokens:
+        return True
+    # System/metadata labels
+    _SYSTEM_LABELS = {"gap", "statement", "finding", "phase", "report", "brief",
+                      "summary", "methodology", "appendix", "source"}
+    if lower_tokens[-1] in _SYSTEM_LABELS or lower_tokens[0] in {"no", "retrieved", "search"}:
+        return True
+    # Famous non-people that regular expressions might catch
+    _FAMOUS_NON_PEOPLE = {
+        "habsburg", "monarchy", "sicilian", "mafia", "revolution", "sciences",
+        "forensic", "real", "estate", "media", "platform", "supreme", "court",
+        "congress", "senate", "committee", "department", "bureau", "agency",
+        "wikipedia", "reddit", "twitter", "facebook", "instagram", "youtube",
+        "github", "linkedin", "tiktok", "snapchat", "telegram", "whatsapp",
+        "openstreetmap", "montreal", "fastly", "cloudflare", "akamai",
+    }
+    if any(t in _FAMOUS_NON_PEOPLE for t in lower_tokens):
+        return True
 
     # Names ending with common non-name words
     non_name_ends = {

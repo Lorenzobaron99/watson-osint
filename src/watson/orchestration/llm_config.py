@@ -7,31 +7,69 @@ logger = logging.getLogger("watson.llm")
 
 # ── Provider config ──────────────────────────────────────────
 
+# Env-var overrides for default models — users can set OPENAI_MODEL=gpt-4o-mini, etc.
+# Falls back to the hardcoded sensible default if env var is not set.
+_MODEL_ENV_VARS = {
+    "deepseek":   "DEEPSEEK_MODEL",
+    "openai":     "OPENAI_MODEL",
+    "anthropic":  "ANTHROPIC_MODEL",
+    "hermes":     "HERMES_MODEL",
+    "openrouter": "OPENROUTER_MODEL",
+}
+
+
+def _default_model(provider: str, fallback: str) -> str:
+    """Return the default model for a provider, respecting env var, persisted config, then fallback.
+    
+    Priority: env var > persisted config (~/.watson/llm_config.json) > fallback.
+    """
+    # 1. Check per-provider env var (DEEPSEEK_MODEL, OPENAI_MODEL, etc.)
+    env_var = _MODEL_ENV_VARS.get(provider)
+    if env_var:
+        env_val = os.environ.get(env_var, "")
+        if env_val:
+            return env_val
+    
+    # 2. Check persisted config from UI
+    try:
+        from pathlib import Path
+        config_path = Path.home() / ".watson" / "llm_config.json"
+        if config_path.exists():
+            config = json.loads(config_path.read_text())
+            if config.get("provider") == provider and config.get("model"):
+                return config["model"]
+    except Exception:
+        pass
+    
+    # 3. Fall back to hardcoded default
+    return fallback
+
+
 _PROVIDER_CONFIG = {
     "deepseek": {
         "base_url": "https://api.deepseek.com/v1",
         "api_key_env": "DEEPSEEK_API_KEY",
-        "default_model": os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-pro"),
+        "default_model": _default_model("deepseek", "deepseek-chat"),
     },
     "openai": {
         "base_url": "https://api.openai.com/v1",
         "api_key_env": "OPENAI_API_KEY",
-        "default_model": "gpt-4o",
+        "default_model": _default_model("openai", "gpt-4o"),
     },
     "anthropic": {
         "base_url": "https://api.anthropic.com/v1",
         "api_key_env": "ANTHROPIC_API_KEY",
-        "default_model": "claude-sonnet-4-20250514",
+        "default_model": _default_model("anthropic", "claude-sonnet-4-20250514"),
     },
     "hermes": {
         "base_url": os.environ.get("HERMES_API_BASE", "http://localhost:8080/v1"),
         "api_key_env": "HERMES_API_KEY",
-        "default_model": "hermes",
+        "default_model": _default_model("hermes", "hermes"),
     },
     "openrouter": {
         "base_url": "https://openrouter.ai/api/v1",
         "api_key_env": "OPENROUTER_API_KEY",
-        "default_model": "deepseek/deepseek-chat",
+        "default_model": _default_model("openrouter", "deepseek/deepseek-chat"),
     },
 }
 
@@ -252,7 +290,7 @@ async def call_llm_with_fallback(
         
         result = await call_llm(
             prompt=prompt, timeout=timeout, max_tokens=max_tokens,
-            model=model, provider=p, system=system,
+            model=model, provider=p, system=system, fallback=False,
         )
         
         if result is not None:

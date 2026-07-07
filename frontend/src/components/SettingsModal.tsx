@@ -28,6 +28,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const [llmProvider, setLlmProvider] = useState<string>(
     localStorage.getItem("WATSON_LLM_PROVIDER") || ""
   );
+  const [llmModel, setLlmModel] = useState<string>("");
   const [llmKey, setLlmKey] = useState("");
 
   // Build LLM provider list from keys with category="llm"
@@ -59,6 +60,14 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         setLoading(false);
       })
       .catch(() => setLoading(false));
+    // Load current model from backend
+    fetch("/api/settings/llm")
+      .then(r => r.json())
+      .then(data => {
+        if (data.model) setLlmModel(data.model);
+        if (data.provider && !llmProvider) setLlmProvider(data.provider);
+      })
+      .catch(() => {});
   }, [isOpen]);
 
   const handleSaveKey = async (slug: string) => {
@@ -89,6 +98,14 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ slug: llmProvider, value: llmKey }),
+      });
+    } catch {}
+    // Save provider + model to persistent backend config
+    try {
+      await fetch("/api/settings/llm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: llmProvider, model: llmModel }),
       });
     } catch {}
     setSaved(prev => ({ ...prev, llm: true }));
@@ -143,6 +160,38 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                 <option key={k.slug} value={k.slug}>{k.label}</option>
               ))}
             </select>
+            <input type="text" placeholder="Model (e.g. deepseek-chat, gpt-4o-mini)…"
+              value={llmModel} onChange={e => setLlmModel(e.target.value)}
+              list="model-suggestions"
+              className="flex-1 bg-surface-dark border border-outline-variant/60 rounded p-2 text-[11px] font-technical text-primary focus:ring-1 focus:ring-primary focus:border-primary outline-none" />
+            <datalist id="model-suggestions">
+              {(llmProvider === "deepseek" ? ["deepseek-chat", "deepseek-reasoner"] :
+                llmProvider === "openai" ? ["gpt-4o-mini", "gpt-4o", "gpt-4.1"] :
+                llmProvider === "anthropic" ? ["claude-sonnet-4-20250514", "claude-opus-4-20250514", "claude-haiku-3-5-20250514"] :
+                llmProvider === "openrouter" ? ["deepseek/deepseek-chat", "openai/gpt-4o-mini", "anthropic/claude-sonnet-4", "google/gemini-2.5-flash"] :
+                ["deepseek-chat", "gpt-4o-mini", "claude-sonnet-4-20250514"]
+              ).map(m => <option key={m} value={m} />)}
+            </datalist>
+          </div>
+          {/* Quick-pick model chips */}
+          <div className="flex flex-wrap gap-1 mb-2">
+            {(llmProvider === "deepseek" ? ["deepseek-chat", "deepseek-reasoner"] :
+              llmProvider === "openai" ? ["gpt-4o-mini", "gpt-4o", "gpt-4.1"] :
+              llmProvider === "anthropic" ? ["claude-sonnet-4-20250514", "claude-opus-4-20250514"] :
+              llmProvider === "openrouter" ? ["deepseek/deepseek-chat", "openai/gpt-4o-mini", "google/gemini-2.5-flash"] :
+              []
+            ).map(m => (
+              <button key={m} type="button" onClick={() => setLlmModel(m)}
+                className={`px-2 py-0.5 text-[9px] font-technical rounded border cursor-pointer transition-all ${
+                  llmModel === m 
+                    ? "bg-primary/20 border-primary text-primary" 
+                    : "bg-surface-dark border-outline-variant/40 text-on-surface-variant hover:border-primary/50 hover:text-primary"
+                }`}>
+                {m}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-2 mb-2">
             <input type="password" placeholder="Paste your API key…"
               value={llmKey} onChange={e => setLlmKey(e.target.value)}
               className="flex-1 bg-surface-dark border border-outline-variant/60 rounded p-2 text-[11px] font-technical text-primary focus:ring-1 focus:ring-primary focus:border-primary outline-none" />

@@ -404,6 +404,12 @@ async def api_tools():
 
 # ── Agent Investigation ──────────────────────────────────────────
 
+# Limit concurrent investigations to prevent CPU/memory exhaustion.
+# Without this gate, 2+ simultaneous investigations each fire 6-8 search
+# engines in parallel, saturating the CPU and triggering rate limits.
+_investigation_semaphore = asyncio.Semaphore(1)
+
+
 @app.post("/api/agent/investigate")
 async def agent_investigate(req: InvestigateRequest):
     """Start a Watson v1 investigation. Returns client_id for SSE stream."""
@@ -416,151 +422,153 @@ async def agent_investigate(req: InvestigateRequest):
     q = sse.create(client_id)
     
     async def run():
-        def push(event_type, data):
-            sse.send(client_id, event_type, data)
-        # ── Mode-based hard timeout — prevents hung investigations from blocking server ──
-        _mode_timeouts = {
-            "background_check": 120,
-            "due_diligence": 420,
-            "deep_investigation": 900,
-            "twin_connection": 300,
-        }
-        _hard_timeout = _mode_timeouts.get(req.mode, 600)
-        try:
-            engine = get_engine()
-            # Register interrupt queue for interactive steering
-            engine.register_interrupt_queue(client_id)
-            # ── Run investigation in a dedicated thread so CPU-bound loops
-            # don't block the uvicorn event loop. The asyncio.wait_for timeout
-            # will fire even if the thread hangs. ──
-            def _run_sync():
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    return loop.run_until_complete(engine.investigate(
-                        query=req.query,
-                        focus=req.context,
-                        on_event=push,
-                        mode=req.mode,
-                        save_mode="auto",
-                    ))
-                finally:
-                    loop.close()
-            result = await asyncio.wait_for(
-                asyncio.to_thread(_run_sync),
-                timeout=_hard_timeout,
-            )
-            
-            # Send final report event with markdown
-            sse.send(client_id, "report", {
-                "case_id": result["case_id"],
-                "findings_count": result["findings_count"],
-                "confirmed": result["confirmed_count"],
-                "verifiability": f"{result['verifiability_score']:.0%}",
-                "markdown": result.get("markdown", ""),
-                "published_to_graph": req.publish_to_graph,
-            })
-            
-            # ── Per-case consent: publish to community knowledge graph ──
-            if req.publish_to_graph and result.get("findings"):
-                publish_error = None
-                try:
-                    # Check if key is available for remote MCP
-                    is_local = "localhost" in MCP_SERVER_URL or "127.0.0.1" in MCP_SERVER_URL
-                    if not is_local and not MCP_API_KEY:
-                        publish_error = "No MCP API key configured. Set it in onboarding or with: export MCP_API_KEY=your-key"
-                    else:
-                        # Use the engine's report if available, otherwise publish manually
-                        engine_report = getattr(result, '_report', None)
-                        if engine_report:
-                            _pub_result, _pub_err = _publish_to_mcp(engine_report)
-                            if _pub_err:
-                                publish_error = _pub_err
+        # Wait for turn — only one investigation at a time
+        async with _investigation_semaphore:
+            def push(event_type, data):
+                sse.send(client_id, event_type, data)
+            # ── Mode-based hard timeout — prevents hung investigations from blocking server ──
+            _mode_timeouts = {
+                "background_check": 180,
+                "due_diligence": 420,
+                "deep_investigation": 900,
+                "twin_connection": 300,
+            }
+            _hard_timeout = _mode_timeouts.get(req.mode, 600)
+            try:
+                engine = get_engine()
+                # Register interrupt queue for interactive steering
+                engine.register_interrupt_queue(client_id)
+                # ── Run investigation in a dedicated thread so CPU-bound loops
+                # don't block the uvicorn event loop. The asyncio.wait_for timeout
+                # will fire even if the thread hangs. ──
+                def _run_sync():
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        return loop.run_until_complete(engine.investigate(
+                            query=req.query,
+                            focus=req.context,
+                            on_event=push,
+                            mode=req.mode,
+                            save_mode="auto",
+                        ))
+                    finally:
+                        loop.close()
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(_run_sync),
+                    timeout=_hard_timeout,
+                )
+                
+                # Send final report event with markdown
+                sse.send(client_id, "report", {
+                    "case_id": result["case_id"],
+                    "findings_count": result["findings_count"],
+                    "confirmed": result["confirmed_count"],
+                    "verifiability": f"{result['verifiability_score']:.0%}",
+                    "markdown": result.get("markdown", ""),
+                    "published_to_graph": req.publish_to_graph,
+                })
+                
+                # ── Per-case consent: publish to community knowledge graph ──
+                if req.publish_to_graph and result.get("findings"):
+                    publish_error = None
+                    try:
+                        # Check if key is available for remote MCP
+                        is_local = "localhost" in MCP_SERVER_URL or "127.0.0.1" in MCP_SERVER_URL
+                        if not is_local and not MCP_API_KEY:
+                            publish_error = "No MCP API key configured. Set it in onboarding or with: export MCP_API_KEY=your-key"
                         else:
-                            # Fallback: publish entities from findings directly
-                            import httpx
-                            entities = []
-                            for f in result["findings"]:
-                                if hasattr(f, 'tier') and f.tier in ("CONFIRMED", "PROBABLE"):
-                                    for ent in getattr(f, 'entities', []):
-                                        # Normalize entities — they come in as strings, dicts, or objects
-                                        if isinstance(ent, str):
-                                            val, etype = ent.strip(), "unknown"
-                                        elif isinstance(ent, dict):
-                                            val = ent.get("value", ent.get("canonical", ""))
-                                            etype = ent.get("type", "unknown")
-                                        elif hasattr(ent, 'value'):
-                                            val = getattr(ent, 'value', '') or getattr(ent, 'canonical', '')
-                                            etype = getattr(ent, 'type', 'unknown')
-                                        else:
-                                            val, etype = str(ent), "unknown"
-                                        # Skip empty values — MCP validator rejects them
-                                        if not val or not val.strip():
-                                            continue
-                                        entities.append({
-                                            "value": val.strip()[:500],
-                                            "type": etype or "unknown",
-                                            "source": ent.get("source", "") if isinstance(ent, dict) else "",
-                                            "tier": f.tier if hasattr(f, 'tier') else "PROBABLE",
-                                            "case_id": result["case_id"],
-                                        })
-                            if entities:
-                                payload = {
-                                    "case_id": result["case_id"],
-                                    "target": req.query,
-                                    "target_type": "",
-                                    "findings_count": len(result["findings"]),
-                                    "confirmed_count": result.get("confirmed_count", 0),
-                                    "verifiability": "",
-                                    "date": "",
-                                    "entities": entities,
-                                }
-                                resp = httpx.post(
-                                    f"{MCP_SERVER_URL}/api/ingest",
-                                    json=payload, timeout=10,
-                                    headers={"X-API-Key": MCP_API_KEY} if MCP_API_KEY else {},
-                                )
-                                if resp.status_code != 200:
-                                    publish_error = f"MCP server returned {resp.status_code}"
-                except Exception as e:
-                    publish_error = str(e)
+                            # Use the engine's report if available, otherwise publish manually
+                            engine_report = getattr(result, '_report', None)
+                            if engine_report:
+                                _pub_result, _pub_err = _publish_to_mcp(engine_report)
+                                if _pub_err:
+                                    publish_error = _pub_err
+                            else:
+                                # Fallback: publish entities from findings directly
+                                import httpx
+                                entities = []
+                                for f in result["findings"]:
+                                    if hasattr(f, 'tier') and f.tier in ("CONFIRMED", "PROBABLE"):
+                                        for ent in getattr(f, 'entities', []):
+                                            # Normalize entities — they come in as strings, dicts, or objects
+                                            if isinstance(ent, str):
+                                                val, etype = ent.strip(), "unknown"
+                                            elif isinstance(ent, dict):
+                                                val = ent.get("value", ent.get("canonical", ""))
+                                                etype = ent.get("type", "unknown")
+                                            elif hasattr(ent, 'value'):
+                                                val = getattr(ent, 'value', '') or getattr(ent, 'canonical', '')
+                                                etype = getattr(ent, 'type', 'unknown')
+                                            else:
+                                                val, etype = str(ent), "unknown"
+                                            # Skip empty values — MCP validator rejects them
+                                            if not val or not val.strip():
+                                                continue
+                                            entities.append({
+                                                "value": val.strip()[:500],
+                                                "type": etype or "unknown",
+                                                "source": ent.get("source", "") if isinstance(ent, dict) else "",
+                                                "tier": f.tier if hasattr(f, 'tier') else "PROBABLE",
+                                                "case_id": result["case_id"],
+                                            })
+                                if entities:
+                                    payload = {
+                                        "case_id": result["case_id"],
+                                        "target": req.query,
+                                        "target_type": "",
+                                        "findings_count": len(result["findings"]),
+                                        "confirmed_count": result.get("confirmed_count", 0),
+                                        "verifiability": "",
+                                        "date": "",
+                                        "entities": entities,
+                                    }
+                                    resp = httpx.post(
+                                        f"{MCP_SERVER_URL}/api/ingest",
+                                        json=payload, timeout=10,
+                                        headers={"X-API-Key": MCP_API_KEY} if MCP_API_KEY else {},
+                                    )
+                                    if resp.status_code != 200:
+                                        publish_error = f"MCP server returned {resp.status_code}"
+                    except Exception as e:
+                        publish_error = str(e)
 
-                if publish_error:
-                    sse.send(client_id, "graph_error", {
-                        "message": f"Graph publish failed: {publish_error}",
-                        "case_id": result["case_id"],
-                    })
-                else:
-                    sse.send(client_id, "graph_published", {
-                        "case_id": result["case_id"],
-                        "url": MCP_SERVER_URL,
-                    })
-            
-            logger.info("investigation_complete", extra={
-                "client_id": client_id, "query": req.query[:80],
-                "findings": result["findings_count"],
-                "case": result["case_id"],
-            })
-        except asyncio.TimeoutError:
-            logger.error("investigation_timeout", extra={
-                "client_id": client_id, "query": req.query[:80],
-                "mode": req.mode,
-            })
-            sse.send(client_id, "error", {
-                "message": f"Investigation timed out after {_hard_timeout}s — try a shallower mode or narrower query"
-            })
-        except Exception as e:
-            logger.error("investigation_failed", extra={
-                "client_id": client_id, "query": req.query[:80], "error": str(e),
-            })
-            sse.send(client_id, "error", {"message": str(e)})
-        finally:
-            await asyncio.sleep(0.5)
-            sse.send(client_id, "_close", {})
-            # Cleanup interrupt queue
-            from src.watson.orchestration import get_engine as _get_eng
-            _eng = _get_eng()
-            _eng.remove_interrupt_queue(client_id)
+                    if publish_error:
+                        sse.send(client_id, "graph_error", {
+                            "message": f"Graph publish failed: {publish_error}",
+                            "case_id": result["case_id"],
+                        })
+                    else:
+                        sse.send(client_id, "graph_published", {
+                            "case_id": result["case_id"],
+                            "url": MCP_SERVER_URL,
+                        })
+                
+                logger.info("investigation_complete", extra={
+                    "client_id": client_id, "query": req.query[:80],
+                    "findings": result["findings_count"],
+                    "case": result["case_id"],
+                })
+            except asyncio.TimeoutError:
+                logger.error("investigation_timeout", extra={
+                    "client_id": client_id, "query": req.query[:80],
+                    "mode": req.mode,
+                })
+                sse.send(client_id, "error", {
+                    "message": f"Investigation timed out after {_hard_timeout}s — try a shallower mode or narrower query"
+                })
+            except Exception as e:
+                logger.error("investigation_failed", extra={
+                    "client_id": client_id, "query": req.query[:80], "error": str(e),
+                })
+                sse.send(client_id, "error", {"message": str(e)})
+            finally:
+                await asyncio.sleep(0.5)
+                sse.send(client_id, "_close", {})
+                # Cleanup interrupt queue
+                from src.watson.orchestration import get_engine as _get_eng
+                _eng = _get_eng()
+                _eng.remove_interrupt_queue(client_id)
     
     task = asyncio.create_task(run())
     register_task(task)
@@ -1574,6 +1582,81 @@ async def delete_api_key(slug: str):
     from watson.api_keys import delete_key
     delete_key(slug)
     return {"status": "ok", "slug": slug, "configured": False}
+
+
+# ── LLM Model Settings ────────────────────────────────────────────
+
+import json as _json
+from pathlib import Path as _Path
+
+_LLM_CONFIG_PATH = _Path.home() / ".watson" / "llm_config.json"
+
+
+def _load_llm_config() -> dict:
+    """Load persisted LLM config from ~/.watson/llm_config.json."""
+    try:
+        if _LLM_CONFIG_PATH.exists():
+            return _json.loads(_LLM_CONFIG_PATH.read_text())
+    except Exception:
+        pass
+    return {}
+
+
+def _save_llm_config(config: dict) -> None:
+    """Persist LLM config to ~/.watson/llm_config.json."""
+    _LLM_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _LLM_CONFIG_PATH.write_text(_json.dumps(config, indent=2))
+
+
+def get_active_llm_config() -> dict:
+    """Get the active LLM provider + model, respecting persisted config.
+    
+    Called at startup and by the API. Returns {"provider": str, "model": str}.
+    Provider: deepseek, openai, anthropic, hermes, openrouter, or "" if unset.
+    Model: the model name to use (e.g. "deepseek-chat", "gpt-4o-mini").
+    """
+    config = _load_llm_config()
+    provider = os.environ.get("WATSON_LLM_PROVIDER", "") or config.get("provider", "")
+    model = config.get("model", "")
+    # If model not set in config, check env vars per provider
+    if not model and provider:
+        from src.watson.orchestration.llm_config import _PROVIDER_CONFIG
+        cfg = _PROVIDER_CONFIG.get(provider, {})
+        model = cfg.get("default_model", "")
+    return {"provider": provider, "model": model}
+
+
+@app.get("/api/settings/llm")
+async def get_llm_config():
+    """Get the current LLM provider and model."""
+    return get_active_llm_config()
+
+
+class LLMConfigRequest(BaseModel):
+    provider: str = ""
+    model: str = ""
+
+
+@app.post("/api/settings/llm")
+async def set_llm_config(req: LLMConfigRequest):
+    """Save LLM provider and model to persistent config.
+    
+    The model overrides the default for the chosen provider.
+    Provider change takes effect on next investigation.
+    """
+    config = _load_llm_config()
+    if req.provider:
+        config["provider"] = req.provider
+    if req.model:
+        config["model"] = req.model
+    elif "model" in config and not req.model:
+        # Explicitly clearing the model
+        del config["model"]
+    _save_llm_config(config)
+    # Also set env var for immediate effect in this process
+    if req.provider:
+        os.environ["WATSON_LLM_PROVIDER"] = req.provider
+    return {"status": "ok", **get_active_llm_config()}
 
 
 # ── Enterprise Exports ──────────────────────────────────────────

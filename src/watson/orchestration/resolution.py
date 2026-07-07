@@ -399,9 +399,17 @@ def _classify_entity(text: str) -> str:
     if re.match(r'^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$', text, re.I):
         return "domain"
     
-    # Person (2+ capitalized words)
+    # Person (2+ capitalized words) — validate with spaCy
     if re.match(r'^[A-Z][a-z]+ [A-Z][a-z]+', text):
-        return "person"
+        try:
+            from .ner import _spacy_validate_person, _is_garbage_person
+            if _is_garbage_person(text):
+                return "other"
+            if _spacy_validate_person(text, strict_person_only=True):
+                return "person"
+            return "other"  # spaCy disagrees or says ORG — not a person
+        except ImportError:
+            return "person"
     
     # Handle (contains underscore, digits, or @)
     if '_' in text or '@' in text or any(c.isdigit() for c in text):
@@ -496,6 +504,14 @@ def build_intelligence_picture(
         # If type is not given or "other", classify
         if etype in ("other", ""):
             etype = _classify_entity(name)
+        # ── spaCy quality gate: validate LLM person hints ──
+        if etype == "person":
+            try:
+                from .ner import _spacy_validate_person, _is_garbage_person
+                if _is_garbage_person(name) or not _spacy_validate_person(name, strict_person_only=True):
+                    etype = "other"
+            except ImportError:
+                pass
         
         # Normalize for grouping
         normalized = _normalize(name, etype)

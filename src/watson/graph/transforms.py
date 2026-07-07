@@ -263,10 +263,54 @@ async def _dns_resolution(graph: EntityGraph, entity: Entity) -> list[Entity]:
     return new_entities
 
 
+# ── Shared HTTP infrastructure (avoids per-transform client creation) ──
+
+_shared_client = None  # httpx.AsyncClient — created lazily, shared across transforms
+_crt_cache: dict[str, list[dict]] = {}  # domain → parsed crt.sh JSON
+
+
+async def _get_shared_client() -> "httpx.AsyncClient":
+    """Return a shared httpx client with connection pooling. Created once per session."""
+    global _shared_client
+    if _shared_client is None or _shared_client.is_closed:
+        import httpx
+        _shared_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(15.0),
+            limits=httpx.Limits(max_keepalive_connections=20, max_connections=50),
+            headers={"User-Agent": "WatsonOSINT/0.4"},
+        )
+    return _shared_client
+
+
+async def _fetch_crt(domain: str) -> list[dict]:
+    """Fetch crt.sh certificate transparency data for a domain. Results are cached
+    so subdomain_enum and email_discovery share a single HTTP call per domain."""
+    if domain in _crt_cache:
+        return _crt_cache[domain]
+
+    try:
+        client = await _get_shared_client()
+        url = f"https://crt.sh/?q=%25.{domain}&output=json"
+        resp = await client.get(url)
+        if resp.status_code != 200:
+            _crt_cache[domain] = []
+            return []
+        certs = resp.json()
+        if not isinstance(certs, list):
+            _crt_cache[domain] = []
+            return []
+        _crt_cache[domain] = certs
+        return certs
+    except Exception:
+        _crt_cache[domain] = []
+        return []
+
+
 async def _subdomain_enum(graph: EntityGraph, entity: Entity) -> list[Entity]:
     """Discover subdomains via crt.sh SSL certificate transparency logs.
 
     Creates Domain entities and HAS_SUBDOMAIN relationships.
+    Uses shared HTTP client + crt.sh cache to avoid duplicate requests.
     """
     if entity.entity_type != EntityType.DOMAIN:
         return []
@@ -275,59 +319,49 @@ async def _subdomain_enum(graph: EntityGraph, entity: Entity) -> list[Entity]:
     new_entities: list[Entity] = []
 
     try:
-        import httpx
+        certs = await _fetch_crt(domain)
+        if not certs:
+            return []
 
-        url = f"https://crt.sh/?q=%25.{domain}&output=json"
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(
-                url,
-                headers={"User-Agent": "WatsonOSINT/0.4"},
-            )
-            if resp.status_code != 200:
-                return []
+        seen: set[str] = set()
+        for cert in certs[:100]:
+            names = cert.get("name_value", "")
+            for name in names.split("\n"):
+                name = name.strip().lower()
+                if not name or name == domain:
+                    continue
+                if name.startswith("*."):
+                    name = name[2:]
+                if name in seen:
+                    continue
+                seen.add(name)
 
-            certs = resp.json()
-            if not isinstance(certs, list):
-                return []
+                sub_entity = make_entity(
+                    EntityType.DOMAIN,
+                    name,
+                    source="subdomain_enum",
+                    confidence=0.80,
+                    display_name=name,
+                )
+                new_entities.append(sub_entity)
 
-            seen: set[str] = set()
-            for cert in certs[:100]:
-                names = cert.get("name_value", "")
-                for name in names.split("\n"):
-                    name = name.strip().lower()
-                    if not name or name == domain:
-                        continue
-                    if name.startswith("*."):
-                        name = name[2:]
-                    if name in seen:
-                        continue
-                    seen.add(name)
-
-                    sub_entity = make_entity(
-                        EntityType.DOMAIN,
-                        name,
-                        source="subdomain_enum",
+                try:
+                    rel = Relationship(
+                        source_id=entity.id,
+                        target_id=sub_entity.id,
+                        rel_type=RelationshipType.HAS_SUBDOMAIN,
                         confidence=0.80,
-                        display_name=name,
+                        source_transform="subdomain_enum",
+                        evidence=[
+                            f"https://crt.sh/?q=%25.{domain}"
+                        ],
                     )
-                    new_entities.append(sub_entity)
+                    graph.add_entity(sub_entity)
+                    graph.add_relationship(rel)
+                except ValueError:
+                    pass
 
-                    try:
-                        rel = Relationship(
-                            source_id=entity.id,
-                            target_id=sub_entity.id,
-                            rel_type=RelationshipType.HAS_SUBDOMAIN,
-                            confidence=0.80,
-                            source_transform="subdomain_enum",
-                            evidence=[
-                                f"https://crt.sh/?q=%25.{domain}"
-                            ],
-                        )
-                        graph.add_entity(sub_entity)
-                        graph.add_relationship(rel)
-                    except ValueError:
-                        pass
-
+        if new_entities:
             logger.info(
                 "subdomain_enum: %s → %d subdomains",
                 domain, len(new_entities),
@@ -423,8 +457,9 @@ async def _ip_geolocation(graph: EntityGraph, entity: Entity) -> list[Entity]:
 async def _email_discovery(graph: EntityGraph, entity: Entity) -> list[Entity]:
     """Discover email addresses associated with a domain.
 
-    Searches crt.sh and WHOIS for email references. Creates Email entities
-    and HAS_EMAIL relationships.
+    Searches crt.sh for email references in certificate issuer fields.
+    Uses the shared crt.sh cache — avoids a duplicate HTTP call if
+    subdomain_enum already fetched this domain.
     """
     if entity.entity_type != EntityType.DOMAIN:
         return []
@@ -434,38 +469,18 @@ async def _email_discovery(graph: EntityGraph, entity: Entity) -> list[Entity]:
     seen_emails: set[str] = set()
 
     try:
-        import httpx
         import re
 
-        # Method 1: crt.sh sometimes contains email addresses in cert fields
-        url = f"https://crt.sh/?q=%25.{domain}&output=json"
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(
-                url,
-                headers={"User-Agent": "WatsonOSINT/0.4"},
-            )
-            if resp.status_code == 200:
-                certs = resp.json()
-                if isinstance(certs, list):
-                    email_re = re.compile(
-                        r'[\w.+-]+@[\w-]+\.[a-zA-Z]{2,}'
-                    )
-                    for cert in certs[:50]:
-                        issuer = cert.get("issuer_name", "")
-                        for match in email_re.finditer(issuer):
-                            email = match.group(0).lower()
-                            if email not in seen_emails:
-                                seen_emails.add(email)
-
-        # Method 2: Check common role-based emails
-        _common_roles = [
-            "admin", "support", "info", "contact", "security",
-            "abuse", "hostmaster", "postmaster", "webmaster",
-        ]
-        for role in _common_roles:
-            email = f"{role}@{domain}"
-            if email not in seen_emails:
-                seen_emails.add(email)
+        # Reuse crt.sh data already fetched by subdomain_enum (or fetch now)
+        certs = await _fetch_crt(domain)
+        if certs:
+            email_re = re.compile(r'[\w.+-]+@[\w-]+\.[a-zA-Z]{2,}')
+            for cert in certs[:50]:
+                issuer = cert.get("issuer_name", "")
+                for match in email_re.finditer(issuer):
+                    email = match.group(0).lower()
+                    if email not in seen_emails:
+                        seen_emails.add(email)
 
         # Create entity + relationship for each discovered email
         for email in seen_emails:
@@ -473,7 +488,7 @@ async def _email_discovery(graph: EntityGraph, entity: Entity) -> list[Entity]:
                 EntityType.EMAIL,
                 email,
                 source="email_discovery",
-                confidence=0.55,  # Lower confidence — not verified
+                confidence=0.55,
                 display_name=email,
             )
             new_entities.append(email_entity)

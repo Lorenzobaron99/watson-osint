@@ -35,7 +35,7 @@ const STEPS = [
   },
   {
     title: "Configure Your LLM Key",
-    body: "Watson needs an LLM provider to generate intelligence reports. Pick any provider — DeepSeek (free tier), OpenAI, Anthropic, or a local model via Hermes. Paste your API key below, then hit Continue.",
+    body: "Watson needs an LLM provider and model to generate intelligence reports. Pick any provider — DeepSeek (free tier, use 'deepseek-chat'), OpenAI ('gpt-4o-mini'), Anthropic, or OpenRouter. Choose your model, paste your API key, and hit Save. Watson remembers your choices across sessions.",
     isSetup: true,
   },
   {
