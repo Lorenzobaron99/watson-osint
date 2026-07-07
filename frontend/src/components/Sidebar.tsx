@@ -12,19 +12,30 @@ export default function Sidebar({ currentTab, setCurrentTab, deductionProbabilit
   const [vaultOpen, setVaultOpen] = useState(false);
   const [typedTitle, setTypedTitle] = useState("");
   const [activeModel, setActiveModel] = useState("");
-  const caseTitle = "Autonomous OSINT Investigation";
+
+  const SHERLOCK_QUOTES = [
+    "It is a capital mistake to theorize before one has data.",
+    "The world is full of obvious things which nobody by any chance ever observes.",
+    "There is nothing more deceptive than an obvious fact.",
+    "You see, but you do not observe.",
+    "Data! Data! Data! I can't make bricks without clay.",
+    "When you have eliminated the impossible, whatever remains, however improbable, must be the truth.",
+    "The little things are infinitely the most important.",
+    "What one man can invent, another can discover.",
+  ];
 
   useEffect(() => {
+    const quote = SHERLOCK_QUOTES[Math.floor(Math.random() * SHERLOCK_QUOTES.length)];
     let index = 0;
     setTypedTitle("");
     const interval = setInterval(() => {
-      if (index < caseTitle.length) {
-        setTypedTitle(prev => prev + caseTitle.charAt(index));
+      if (index < quote.length) {
+        setTypedTitle(prev => prev + quote.charAt(index));
         index++;
       } else {
         clearInterval(interval);
       }
-    }, 40);
+    }, 30);
     return () => clearInterval(interval);
   }, []);
 
