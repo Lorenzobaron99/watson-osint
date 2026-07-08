@@ -1,4 +1,4 @@
-# 🕵️ Watson — The OSINT Investigation Engine
+# 🕵️ Watson — The Agentic OSINT Investigation Engine
 
 <p align="center">
   <img src="holmes-watch.jpg" alt="Holmes pulled out his watch — Sidney Paget, 1893" width="240" style="border-radius: 8px;">
@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Open source intelligence for an age of noise.</strong><br>
-  <em>Stop searching. Start investigating.</em>
+  <em>"When you have eliminated the impossible, whatever remains, however improbable, must be the truth."</em>
 </p>
 
 <p align="center">
