@@ -17,6 +17,10 @@
   <a href="https://lorenzobaron99.github.io/watson#community"><img src="https://img.shields.io/badge/website-watson--osint-amber" alt="Website"></a>
 </p>
 
+<p align="center">
+  <img src="watson-demo.gif" alt="Watson demo — Binance investigation with entity graph" width="720">
+</p>
+
 ---
 
 > **Why Watson exists.** AI agents now surpassed human internet traffic. Search engines return noise dressed as answers. The public is drowning in plausible-sounding falsehoods while truth sits buried under sponsored links and SEO spam. OSINT analysts spend hours assembling fragments from a dozen tools — crt.sh for certs, OpenSanctions for entities, Wayback for history, DuckDuckGo for surface — then manually cross-reference everything into a spreadsheet.
